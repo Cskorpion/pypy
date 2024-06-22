@@ -694,6 +694,32 @@ class TestIncrementalMiniMarkGCSimple(TestMiniMarkGCSimple):
         assert adr4 == adr3
         assert obj3.x == 456     # it is populated now
 
+class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
+    from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
+
+    GC_PARAMS = {'sample_allocated_bytes': 16*WORD}
+
+    def test_vmprof_allocation_based_sampling_dummy(self):
+
+        def dummy_trigger_func(gc):
+            gc.allocation_sample_dummy = True
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.malloc(S)# fixedsize malloc
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert not hasattr(self.gc, "allocation_sample_dummy")
+        assert self.gc.nursery_top.offset == 128 
+
+        self.malloc(S) # sample should be done here
+
+        assert self.gc.allocation_sample_dummy == True
+        assert self.gc.nursery_top.offset == 256 
+
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass

@@ -75,6 +75,7 @@ from rpython.rlib.debug import ll_assert, debug_print, debug_start, debug_stop
 from rpython.rlib.objectmodel import specialize
 from rpython.rlib import rgc
 from rpython.memory.gc.minimarkpage import out_of_memory
+from rpython.rlib import rvmprof
 
 #
 # Handles the objects in 2 generations:
@@ -290,6 +291,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                  card_page_indices=0,
                  large_object=8*WORD,
                  ArenaCollectionClass=None,
+                 sample_allocated_bytes=None,
                  **kwds):
         "NOT_RPYTHON"
         MovingGCBase.__init__(self, config, **kwds)
@@ -367,6 +369,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.size_objects_made_old = r_uint(0)
         self.threshold_objects_made_old = r_uint(0)
 
+        # Sampling rate in Bytes (needs to be word aligned)
+        assert not sample_allocated_bytes or sample_allocated_bytes % WORD == 0
+        self.sample_allocated_bytes = sample_allocated_bytes
+        # Set first sampling point
+        self.sample_point = None 
 
     def setup(self):
         """Called at run-time to initialize the GC."""
@@ -554,7 +561,13 @@ class IncrementalMiniMarkGC(MovingGCBase):
         # the current position in the nursery:
         self.nursery_free = self.nursery
         # the end of the nursery:
-        self.nursery_top = self.nursery + self.nursery_size
+        if self.sample_allocated_bytes: # For allocation based profiling with VMProf
+            self.sample_point = self.nursery + self.sample_allocated_bytes
+            self.nursery_top = self.sample_point # set nursery to fisrt sampling point
+            self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
+        else:
+            self.nursery_top = self.nursery + self.nursery_size
+            self.real_nursery_top = self.nursery_top
         # initialize the threshold
         self.min_heap_size = max(self.min_heap_size, self.nursery_size *
                                               self.major_collection_threshold)
@@ -861,6 +874,20 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # note: no "raise MemoryError" between here and the next time
             # we initialize nursery_free!
 
+            # Allocation triggered profiling with VMProf
+            if self.nursery_top == self.sample_point:# sample_point == None if sampling disabled
+                self._vmprof_allocation_sample_now(self)
+                new_sample_point = self.sample_point + self.sample_allocated_bytes
+                # Set new sampling_point before real_nursery_top
+                if new_sample_point < self.real_nursery_top:
+                    self.nursery_top = self.sample_point = new_sample_point
+                    return
+                # New sample point does not "fit in the nursery"
+                # So we need to set it to new_sample_point modulo nursery_size
+                #else:
+                #    self.nursery_top = self.sample_point = new_sample_point % self.nursery_size
+
+
             if self.nursery_barriers.non_empty():
                 # Pinned object in front of nursery_top. Try reserving totalsize
                 # by jumping into the next, yet unused, area inside the
@@ -893,6 +920,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 # update used nursery space to allocate objects
                 self.nursery_free = self.nursery_top + pinned_obj_size
                 self.nursery_top = self.nursery_barriers.popleft()
+                if self.sample_point and self.sample_point + self.sample_allocated_bytes < self.nursery_top:
+                    self.nursery_top = self.sample_point = self.sample_point + self.sample_allocated_bytes
+                else:
+                    # TODO
+                    pass
             else:
                 minor_collection_count += 1
                 if minor_collection_count == 1:
@@ -1888,6 +1920,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
         #
         self.nursery_free = self.nursery
         self.nursery_top = self.nursery_barriers.popleft()
+        if self.sample_point and self.sample_point + self.sample_allocated_bytes < self.nursery_top:
+            self.nursery_top = self.sample_point = self.sample_point + self.sample_allocated_bytes
+        else:
+            # TODO
+            pass
         #
         # clear GCFLAG_PINNED_OBJECT_PARENT_KNOWN from all parents in the list.
         self.old_objects_pointing_to_pinned.foreach(
