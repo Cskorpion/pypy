@@ -641,6 +641,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             llarena.arena_protect(newnurs, self._nursery_memory_size(), False)
             self.nursery = newnurs
             self.nursery_top = self.nursery + self.nursery_size
+            self.real_nursery_top = self.nursery_top
             debug_print("switching from nursery", oldnurs,
                         "to nursery", self.nursery,
                         "size", self.nursery_size)
@@ -869,6 +870,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         """
 
         minor_collection_count = 0
+        init_free = self.nursery_free # for returning after sampling 
         while True:
             self.nursery_free = llmemory.NULL      # debug: don't use me
             # note: no "raise MemoryError" between here and the next time
@@ -877,15 +879,30 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # Allocation triggered profiling with VMProf
             if self.nursery_top == self.sample_point:# sample_point == None if sampling disabled
                 self._vmprof_allocation_sample_now(self)
+                if self.sample_point.offset + self.sample_allocated_bytes >= self.real_nursery_top.offset:
+                    # flag for setting new sampling point after a minor collection if the next sampling point would not fit in the nursery
+                    self.reset_sample_point_after_collect = True
+                    self.sample_point_after_collect =  self.sample_point.offset + self.sample_allocated_bytes % self.nursery_size
+                    # sampling to be enabled again after minor_collect
+                    # remove current sample_point
+                    self.sample_point = None
+                    # set nursery top to real nursery top
+                    self.nursery_top = self.real_nursery_top
+                    # try to collect_and_reserve
+                    if init_free + totalsize <= self.nursery_top:
+                        self.nursery_free = init_free + totalsize
+                        result = init_free
+                        break # enough space to reserve => break loop and return
+                    continue# not enough space => collect and reserve
                 new_sample_point = self.sample_point + self.sample_allocated_bytes
                 # Set new sampling_point before real_nursery_top
-                if new_sample_point < self.real_nursery_top:
-                    self.nursery_top = self.sample_point = new_sample_point
-                    return
-                # New sample point does not "fit in the nursery"
-                # So we need to set it to new_sample_point modulo nursery_size
-                #else:
-                #    self.nursery_top = self.sample_point = new_sample_point % self.nursery_size
+                self.nursery_top = self.sample_point = new_sample_point
+                # nursery top moved => now do try to alloc
+                if init_free + totalsize <= self.nursery_top:
+                    self.nursery_free = init_free + totalsize
+                    result = init_free
+                    break # enough space to reserve => break loop and return
+                # if there is still not enough space continue
 
 
             if self.nursery_barriers.non_empty():
@@ -920,7 +937,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 # update used nursery space to allocate objects
                 self.nursery_free = self.nursery_top + pinned_obj_size
                 self.nursery_top = self.nursery_barriers.popleft()
-                if self.sample_point and self.sample_point + self.sample_allocated_bytes < self.nursery_top:
+                # Allocation triggered profiling with VMProf
+                # TODO this does not work this way
+                if self.sample_point and self.sample_point.offset + self.sample_allocated_bytes.offset < self.nursery_top:
+                    #use offset herer to not trigger Arena offset Error if false
+                    self.real_nursery_top = self.nursery_top
                     self.nursery_top = self.sample_point = self.sample_point + self.sample_allocated_bytes
                 else:
                     # TODO
@@ -1920,7 +1941,10 @@ class IncrementalMiniMarkGC(MovingGCBase):
         #
         self.nursery_free = self.nursery
         self.nursery_top = self.nursery_barriers.popleft()
+        # Allocation triggered profiling with VMProf
+        # TODO this does not work this way
         if self.sample_point and self.sample_point + self.sample_allocated_bytes < self.nursery_top:
+            self.real_nursery_top = self.nursery_top
             self.nursery_top = self.sample_point = self.sample_point + self.sample_allocated_bytes
         else:
             # TODO
