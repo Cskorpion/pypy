@@ -35,6 +35,9 @@ def get_unique_id(code):
 def enable(fileno, interval, memory=0, native=0, real_time=0):
     _get_vmprof().enable(fileno, interval, memory, native, real_time)
 
+def enable_allocation_triggered(fileno, sample_n_bytes=1024,memory=0, native=0, real_time=0):
+    _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes, memory, native, real_time)
+
 def disable():
     _get_vmprof().disable()
 
