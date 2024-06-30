@@ -748,6 +748,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.nursery_top.offset == 256
 
         self.malloc(S)# free:160->192
+        self.malloc(S)# free:192->224
         self.malloc(S)# free:224->256
 
         # Should not have sampled yet
@@ -760,7 +761,32 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.allocation_sample_dummy == 2
         assert self.gc.nursery_top.offset == 384
+        
+    
+    def test_vmprof_allocation_based_sampling_dummy_minor_collection(self):
 
+        def dummy_trigger_func(gc):
+            pass
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.malloc(S)# free:0->32
+        self.malloc(S)# free:32->64
+        self.malloc(S)# free:64->96
+        self.malloc(S)# free:96->128
+        self.malloc(S)# free:128->160
+
+        assert self.gc.nursery_free.offset == 160
+        assert self.gc.nursery_top.offset == 256 
+        assert self.gc.sample_point.offset == 256 
+        
+        self.gc._minor_collection()
+
+        assert self.gc.nursery_free.offset == 0
+        assert self.gc.nursery_top.offset == 128 
+        assert self.gc.sample_point.offset == 128
+        
 
 
 
