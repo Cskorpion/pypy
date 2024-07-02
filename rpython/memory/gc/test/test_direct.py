@@ -701,6 +701,116 @@ class TestIncrementalMiniMarkGCSimple(TestMiniMarkGCSimple):
         assert adr4 == adr3
         assert obj3.x == 456     # it is populated now
 
+class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
+    from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
+
+    GC_PARAMS = {'sample_allocated_bytes': 16 * WORD, # 128 byte
+                 'nursery_size': 4 * 16 * WORD} # 512 byte
+
+    def test_vmprof_allocation_based_sampling_dummy(self):
+
+        def dummy_trigger_func(gc):
+            gc.allocation_sample_dummy = True
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.malloc(S)# fixedsize malloc
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert not hasattr(self.gc, "allocation_sample_dummy")
+        assert self.gc.nursery_top.offset == 128 
+
+        self.malloc(S) # sample should be done here
+
+        assert self.gc.allocation_sample_dummy == True
+        assert self.gc.nursery_top.offset == 256
+    
+    def test_vmprof_allocation_based_sampling_dummy_multiple_samples(self):
+
+        def dummy_trigger_func(gc):
+            if "allocation_sample_dummy" not in gc.__dict__.keys():
+                gc.allocation_sample_dummy = 1
+            else:
+                gc.allocation_sample_dummy += 1
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.malloc(S)# free:0->32
+        self.malloc(S)# free:32->64
+        self.malloc(S)# free:64->96
+        self.malloc(S)# free:96->128
+
+        assert not hasattr(self.gc, "allocation_sample_dummy")
+        assert self.gc.nursery_top.offset == 128 
+
+        # nursery free = 128 = nursery top => next allocation should trigger collect_and_reserve
+
+        self.malloc(S)# free:128->160 -- sample should be done here
+
+        assert self.gc.allocation_sample_dummy == 1
+        assert self.gc.nursery_top.offset == 256
+
+        self.malloc(S)# free:160->192
+        self.malloc(S)# free:192->224
+        self.malloc(S)# free:224->256
+
+        # Should not have sampled yet
+        assert self.gc.allocation_sample_dummy == 1
+        assert self.gc.nursery_top.offset == 256 
+
+        # nursery free = 256 = nursery top => next allocation should trigger collect_and_reserve
+
+        self.malloc(S)# free:256->288 -- sample should be done here
+
+        assert self.gc.allocation_sample_dummy == 2
+        assert self.gc.nursery_top.offset == 384
+        
+    
+    def test_vmprof_allocation_based_sampling_dummy_minor_collection(self):
+
+        def dummy_trigger_func(gc):
+            pass
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.malloc(S)# free:0->32
+        self.malloc(S)# free:32->64
+        self.malloc(S)# free:64->96
+        self.malloc(S)# free:96->128
+        self.malloc(S)# free:128->160
+
+        assert self.gc.nursery_free.offset == 160
+        assert self.gc.nursery_top.offset == 256 
+        assert self.gc.sample_point.offset == 256 
+        
+        self.gc._minor_collection()
+
+        assert self.gc.nursery_free.offset == 0
+        assert self.gc.nursery_top.offset == 128 
+        assert self.gc.sample_point.offset == 128
+    
+    def test_vmprof_allocation_based_sampling_vmprof_hook(self):
+
+        from rpython.rlib.rvmprof import _get_vmprof
+
+        vmp_obj = _get_vmprof()
+
+        assert hasattr(vmp_obj, "gc_set_allocation_sampling")
+
+        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_point.offset == 128
+
+        vmp_obj.gc_set_allocation_sampling(384)
+
+        assert self.gc.sample_allocated_bytes == 384
+        assert self.gc.sample_point.offset == 384
+        
+
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass

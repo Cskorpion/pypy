@@ -119,11 +119,22 @@ def setup():
                                   [rffi.INT, rffi.DOUBLE, rffi.INT, rffi.INT,
                                    rffi.CCHARP, rffi.INT, rffi.INT],
                                   rffi.CCHARP, compilation_info=eci)
+    vmprof_init_gc_triggered = rffi.llexternal("vmprof_init_gc_triggered",
+                                  [rffi.INT, rffi.INT, rffi.INT,
+                                   rffi.CCHARP, rffi.INT, rffi.INT],
+                                  rffi.CCHARP, compilation_info=eci)
     vmprof_enable = rffi.llexternal("vmprof_enable", [rffi.INT, rffi.INT, rffi.INT],
                                     rffi.INT,
                                     compilation_info=eci,
                                     save_err=rffi.RFFI_SAVE_ERRNO)
+    vmprof_enable_gc_triggered = rffi.llexternal("vmprof_enable_gc_triggered", [rffi.INT, rffi.INT, rffi.INT],
+                                    rffi.INT,
+                                    compilation_info=eci,
+                                    save_err=rffi.RFFI_SAVE_ERRNO)
     vmprof_disable = rffi.llexternal("vmprof_disable", [], rffi.INT,
+                                     compilation_info=eci,
+                                     save_err=rffi.RFFI_SAVE_ERRNO)
+    vmprof_disable_gc_triggered = rffi.llexternal("vmprof_disable_gc_triggered", [], rffi.INT,
                                      compilation_info=eci,
                                      save_err=rffi.RFFI_SAVE_ERRNO)
     vmprof_register_virtual_function = rffi.llexternal(
