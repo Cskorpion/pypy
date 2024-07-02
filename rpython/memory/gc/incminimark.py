@@ -379,6 +379,19 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.reset_sample_point_after_collect = False
         self.sample_point_after_collect = 0
 
+        def setup_allocation_sampling(sample_n_bytes=1024):
+            assert sample_allocated_bytes % WORD == 0
+            self.sample_allocated_bytes = sample_n_bytes
+            self.vmprof = _get_vmprof()
+            self.sample_point = self.nursery + self.sample_allocated_bytes
+            self.nursery_top = self.sample_point # set nursery to first sampling point
+            self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
+            
+        _get_vmprof().gc_set_allocation_sampling = setup_allocation_sampling
+        
+    
+    
+
     def setup(self):
         """Called at run-time to initialize the GC."""
         #
@@ -901,17 +914,18 @@ class IncrementalMiniMarkGC(MovingGCBase):
                         # init_free is former free + totalsize and since we dont collect or jump over barrier we need to subtract totalsize
                         result = init_free - totalsize 
                         break # enough space to reserve => break loop and return
-                    continue# not enough space => collect and reserve
-                new_sample_point = self.sample_point + self.sample_allocated_bytes
-                # Set new sampling_point before real_nursery_top
-                self.nursery_top = self.sample_point = new_sample_point
-                # nursery top moved => now do try to alloc
-                if init_free.offset <= self.nursery_top.offset:
-                    self.nursery_free = init_free# + totalsize
-                    # init_free is former free + totalsize and since we dont collect or jump over barrier we need to subtract totalsize
-                    result = init_free - totalsize
-                    break # enough space to reserve => break loop and return
-                # if there is still not enough space continue
+                    #continue not enough space => collect and reserve
+                else:
+                    new_sample_point = self.sample_point + self.sample_allocated_bytes
+                    # Set new sampling_point before real_nursery_top
+                    self.nursery_top = self.sample_point = new_sample_point
+                    # nursery top moved => now do try to alloc
+                    if init_free.offset <= self.nursery_top.offset:
+                        self.nursery_free = init_free# + totalsize
+                        # init_free is former free + totalsize and since we dont collect or jump over barrier we need to subtract totalsize
+                        result = init_free - totalsize
+                        break # enough space to reserve => break loop and return
+                    # if there is still not enough space continue
 
 
             if self.nursery_barriers.non_empty():

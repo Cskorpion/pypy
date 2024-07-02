@@ -786,6 +786,23 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.nursery_free.offset == 0
         assert self.gc.nursery_top.offset == 128 
         assert self.gc.sample_point.offset == 128
+    
+    def test_vmprof_allocation_based_sampling_vmprof_hook(self):
+
+        from rpython.rlib.rvmprof import _get_vmprof
+
+        vmp_obj = _get_vmprof()
+
+        assert hasattr(vmp_obj, "gc_set_allocation_sampling")
+
+        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_point.offset == 128
+
+        vmp_obj.gc_set_allocation_sampling(384)
+
+        assert self.gc.sample_allocated_bytes == 384
+        assert self.gc.sample_point.offset == 384
+        
         
 
 
