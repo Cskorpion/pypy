@@ -295,7 +295,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                  card_page_indices=0,
                  large_object=8*WORD,
                  ArenaCollectionClass=None,
-                 sample_allocated_bytes=None,
+                 sample_allocated_bytes=-1,
                  **kwds):
         "NOT_RPYTHON"
         MovingGCBase.__init__(self, config, **kwds)
@@ -374,14 +374,16 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.threshold_objects_made_old = r_uint(0)
 
         # Sampling rate in Bytes (needs to be word aligned)
-        assert not sample_allocated_bytes or sample_allocated_bytes % WORD == 0
+        assert sample_allocated_bytes == -1 or sample_allocated_bytes % WORD == 0
         self.sample_allocated_bytes = sample_allocated_bytes
-        if self.sample_allocated_bytes:
+        self.allocation_sampling = False
+        if self.sample_allocated_bytes != -1:
             self.vmprof = None 
+            self.allocation_sampling = True
         # Set first sampling point
-        self.sample_point = None 
+        self.sample_point = self.nursery_top
         self.reset_sample_point_after_collect = False
-        self.sample_point_after_collect = 0
+        self.sample_point_after_collect = self.nursery_top # Nonsense TODO: Think of better init value
 
         def setup_allocation_sampling(sample_n_bytes=1024):
             assert sample_allocated_bytes % WORD == 0
@@ -579,7 +581,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.nursery = self._alloc_nursery()
         # the current position in the nursery:
         self.nursery_free = self.nursery
-        if self.sample_allocated_bytes: # For allocation based profiling with VMProf
+        if self.allocation_sampling: # For allocation based profiling with VMProf
             self.sample_point = self.nursery + self.sample_allocated_bytes
             self.nursery_top = self.sample_point # set nursery to fisrt sampling point
             self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
@@ -587,7 +589,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # the end of the nursery:
             self.nursery_top = self.nursery + self.nursery_size
             self.real_nursery_top = self.nursery_top
-            self.sample_point = 0
+            self.sample_point = self.nursery
             self.sample_allocated_bytes = 0
 
         # initialize the threshold
@@ -893,6 +895,10 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
         self.rrc_invoke_callback()
 
+    def _vmprof_allocation_sample_now(self, gc):
+        # Dummy function to be replaced at runtime by VMProf
+        pass
+
 
     def collect_and_reserve(self, totalsize):
         """To call when nursery_free overflows nursery_top.
@@ -910,7 +916,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # we initialize nursery_free!
 
             # Allocation triggered profiling with VMProf
-            if self.nursery_top == self.sample_point:# sample_point == None if sampling disabled
+            # assume short circuit
+            if self.allocation_sampling and self.nursery_top == self.sample_point:# sample_point == None if sampling disabled
                 self._vmprof_allocation_sample_now(self)
                 ### offset cannot be used here => TODO: find way to check size without triggering an Error
                 if self._bump_pointer(self.sample_point, self.sample_allocated_bytes) >= self.real_nursery_top:
@@ -922,7 +929,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                     self.sample_point_after_collect = self._bump_pointer(self.sample_point, offset)
                     # sampling to be enabled again after minor_collect
                     # remove current sample_point
-                    self.sample_point = None
+                    self.sample_point = self.nursery
                     # set nursery top to real nursery top
                     self.nursery_top = self.real_nursery_top
                     # try to collect_and_reserve
@@ -979,7 +986,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 self.nursery_top = self.nursery_barriers.popleft()
                  # Allocation triggered profiling with VMProf
                 # TODO offset field removed => find way to check size without getting error
-                if self.sample_point:
+                if self.allocation_sampling and self.sample_point:
                     try:
                         # try except to check if new sample point overflows nursery
                         self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
@@ -2030,7 +2037,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.nursery_free = self.nursery
         self.nursery_top = self.nursery_barriers.popleft()
         # Allocation triggered profiling with VMProf
-        if self.sample_point:
+        if self.allocation_sampling and self.sample_point:
             try:
                 # try except to check if new sample point overflows nursery
                 self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
