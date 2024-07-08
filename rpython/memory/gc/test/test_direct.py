@@ -794,7 +794,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.nursery_top.offset == 128 
         assert self.gc.sample_point.offset == 128
     
-    def test_vmprof_allocation_based_sampling_vmprof_hook(self):
+    def test_vmprof_allocation_based_sampling_vmprof_hook_enable(self):
 
         from rpython.rlib.rvmprof import _get_vmprof
 
@@ -809,6 +809,24 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.sample_allocated_bytes == 384
         assert self.gc.sample_point.offset == 384
+    
+    def test_vmprof_allocation_based_sampling_vmprof_hook_disable(self):
+
+        from rpython.rlib.rvmprof import _get_vmprof
+
+        vmp_obj = _get_vmprof()
+
+        assert hasattr(vmp_obj, "gc_set_allocation_sampling")
+
+        assert self.gc.allocation_sampling
+        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_point.offset == 128
+
+        vmp_obj.gc_set_allocation_sampling(0)
+
+        assert self.gc.allocation_sampling == False # this bool disables all gc-sampling functionality
+        assert self.gc.sample_allocated_bytes == 0
+        assert self.gc.sample_point.offset == self.gc.nursery.offset
         
 
 

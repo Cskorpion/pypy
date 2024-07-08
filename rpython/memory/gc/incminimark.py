@@ -378,21 +378,29 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.sample_allocated_bytes = sample_allocated_bytes
         self.allocation_sampling = False
         if self.sample_allocated_bytes != -1:
-            self.vmprof = None 
             self.allocation_sampling = True
         # Set first sampling point
         self.sample_point = self.nursery_top
         self.reset_sample_point_after_collect = False
-        self.sample_point_after_collect = self.nursery_top # Nonsense TODO: Think of better init value
+        self.sample_point_after_collect = self.nursery_top # TODO: Think of better init value
 
         def setup_allocation_sampling(sample_n_bytes=1024):
-            assert sample_allocated_bytes % WORD == 0
-            self.sample_allocated_bytes = sample_n_bytes
-            self.vmprof = _get_vmprof()
-            self.sample_point = self.nursery + self.sample_allocated_bytes
-            self.nursery_top = self.sample_point # set nursery to first sampling point
-            self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
+            if sample_n_bytes == 0:
+                self.allocation_sampling = False
+                self.sample_allocated_bytes = 0
+                self.nursery_top = self.nursery + self.nursery_size
+                self.real_nursery_top = self.nursery_top
+                self.sample_point = self.nursery
+            else:
+                assert sample_allocated_bytes % WORD == 0
+                self.allocation_sampling = True
+                self.sample_allocated_bytes = sample_n_bytes
+                self.sample_point = self.nursery + self.sample_allocated_bytes
+                self.nursery_top = self.sample_point # set nursery to first sampling point
+                self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
+                self._vmprof_allocation_sample_now = _get_vmprof().sample_stack_now
             
+        # Place function into vmprof to enable/disable sampling at runtime
         _get_vmprof().gc_set_allocation_sampling = setup_allocation_sampling
 
 
@@ -581,7 +589,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.nursery = self._alloc_nursery()
         # the current position in the nursery:
         self.nursery_free = self.nursery
-        if self.allocation_sampling: # For allocation based profiling with VMProf
+        # For allocation based profiling with VMProf
+        if self.allocation_sampling: 
             self.sample_point = self.nursery + self.sample_allocated_bytes
             self.nursery_top = self.sample_point # set nursery to fisrt sampling point
             self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
