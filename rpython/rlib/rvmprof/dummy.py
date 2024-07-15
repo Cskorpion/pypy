@@ -17,6 +17,12 @@ class DummyVMProf(object):
     def enable(self, fileno, interval, memory=0, native=0, real_time=0):
         pass
 
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024):
+        pass
+
+    def sample_stack_now(self):
+        pass
+
     def disable(self):
         pass
 

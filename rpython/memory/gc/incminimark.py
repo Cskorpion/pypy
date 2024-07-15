@@ -75,7 +75,7 @@ from rpython.rlib.debug import ll_assert, debug_print, debug_start, debug_stop
 from rpython.rlib.objectmodel import specialize, always_inline, we_are_translated
 from rpython.rlib import rgc, unroll
 from rpython.memory.gc.minimarkpage import out_of_memory
-from rpython.rlib.rvmprof.rvmprof import _get_vmprof
+from rpython.rlib.rvmprof.rvmprof import _get_vmprof, VMProfError
 from rpython.rtyper.lltypesystem.llarena import ArenaError
 
 #
@@ -374,7 +374,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.threshold_objects_made_old = r_uint(0)
 
         # Sampling rate in Bytes (needs to be word aligned)
-        assert sample_allocated_bytes == -1 or sample_allocated_bytes % WORD == 0
+        assert sample_allocated_bytes == -1 or sample_allocated_bytes % WORD == 0 # replace with llassert?
         self.sample_allocated_bytes = sample_allocated_bytes
         self.allocation_sampling = False
         if self.sample_allocated_bytes != -1:
@@ -384,7 +384,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.reset_sample_point_after_collect = False
         self.sample_point_after_collect = self.nursery_top # TODO: Think of better init value
 
-        def setup_allocation_sampling(sample_n_bytes=1024):
+        def gc_set_allocation_sampling(sample_n_bytes=1024):
             if sample_n_bytes == 0:
                 self.allocation_sampling = False
                 self.sample_allocated_bytes = 0
@@ -401,11 +401,17 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 self._vmprof_allocation_sample_now = _get_vmprof().sample_stack_now
             
         # Place function into vmprof to enable/disable sampling at runtime
-        _get_vmprof().gc_set_allocation_sampling = setup_allocation_sampling
+        _get_vmprof().gc_set_allocation_sampling = gc_set_allocation_sampling
 
 
     def setup(self):
         """Called at run-time to initialize the GC."""
+
+        #def gc_set_allocation_sampling(sample_n_bytes=1024):
+            #raise VMProfError("GC: We need to use setup")
+
+        #_get_vmprof().gc_set_allocation_sampling = gc_set_allocation_sampling
+
         #
         # Hack: MovingGCBase.setup() sets up stuff related to id(), which
         # we implement differently anyway.  So directly call GCBase.setup().

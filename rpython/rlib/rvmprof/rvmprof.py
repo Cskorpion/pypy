@@ -34,6 +34,10 @@ class FakeWeakCodeObjectList(object):
         pass
     def get_all_handles(self):
         return []
+    
+def gc_set_allocation_sampling(sample_n_bytes=1024):
+    raise VMProfError("Allocation Sampling gc hook not initialized")
+
 
 class VMProf(object):
     """
@@ -52,6 +56,7 @@ class VMProf(object):
         self._cleanup_()
         self._code_unique_id = 4
         self.cintf = cintf.setup()
+        self.gc_set_allocation_sampling = gc_set_allocation_sampling
 
     def _cleanup_(self):
         self.is_enabled = False
@@ -154,7 +159,7 @@ class VMProf(object):
         self.is_enabled = True
     
     @jit.dont_look_inside
-    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, memory=0, native=0, real_time=0):
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024):
         """Enable vmprof.  Writes go to the given 'fileno'.
         No sampling intervall, vmprof gets triggered from the gc.
         Raises VMProfError if something goes wrong.
@@ -163,26 +168,25 @@ class VMProf(object):
         if self.is_enabled:
             raise VMProfError("vmprof is already enabled")
 
-        if PLAT_WINDOWS:
-            native = 0 # force disabled on Windows
-        lines = 0 # not supported on PyPy currently
-
-        p_error = self.cintf.vmprof_init_gc_triggered(fileno, memory, lines, "pypy", native, real_time)
+        p_error = self.cintf.vmprof_init(fileno, 0, 0, 0, "pypy", 0, 0)
         if p_error:
             raise VMProfError(rffi.charp2str(p_error))
 
         self._gather_all_code_objs()
-        res = self.cintf.vmprof_enable(memory, native, real_time)
+        res = self.cintf.vmprof_enable(0, 0, 0)
 
-        # TODO: Do wee need a hook to disable sampling again?
-        # TODO: Funktion im Init einbauen => sol lException werfen 
-        if not hasattr(_vmprof_instance, "gc_set_allocation_sampling"):
-            raise VMProfError("cant set sampling rate in gc")
         _vmprof_instance.gc_set_allocation_sampling(sample_n_bytes)
 
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
+        os.write(2, "vmprof allocation sampling activated\n") 
+
+    @jit.dont_look_inside
+    @rgc.no_collect
+    def sample_stack_now(self):
+        os.write(2, "vmprof allocation sample triggered\n") 
+        #self.cintf.vmprof_sample_stack_now_gc_triggered()
 
     @jit.dont_look_inside
     def disable(self):
