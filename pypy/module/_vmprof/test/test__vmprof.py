@@ -91,7 +91,10 @@ class AppTestVMProf(object):
 
     def test_enable_ovf(self):
         import _vmprof
-        raises(_vmprof.VMProfError, _vmprof.enable, 2, 0, 0, 0, 0, 0)
+
+        # Disabled, bacause allocation based sampling allows interval == 0
+        #raises(_vmprof.VMProfError, _vmprof.enable, 2, 0, 0, 0, 0, 0) 
+        
         raises(_vmprof.VMProfError, _vmprof.enable, 2, -2.5, 0, 0, 0, 0)
         raises(_vmprof.VMProfError, _vmprof.enable, 2, 1e300, 0, 0, 0, 0)
         raises(_vmprof.VMProfError, _vmprof.enable, 2, 1e300 * 1e300, 0, 0, 0, 0)
@@ -152,3 +155,23 @@ class AppTestVMProf(object):
         assert pos3 > pos
         _vmprof.disable()
 
+    def test_enable_allocation_triggered(self):
+        # Only works un Unix
+        import _vmprof
+
+        tmpfile = open(self.tmpfilename, 'wb')
+        fd = tmpfile.fileno()
+        MARKER_GC_STACKTRACE = '\x09'
+
+        _vmprof.enable_allocation_triggered(fd, 0)# prepare everything but dont sample in gc
+
+        _vmprof.sample_stack_now()# manually trigger some samples
+        _vmprof.sample_stack_now()
+        _vmprof.sample_stack_now()
+        _vmprof.sample_stack_now()
+
+        _vmprof.disable()
+
+        s = open(self.tmpfilename, "rb").read()
+    
+        assert s.count(MARKER_GC_STACKTRACE) == 4

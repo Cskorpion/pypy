@@ -36,7 +36,7 @@ class FakeWeakCodeObjectList(object):
         return []
     
 def gc_set_allocation_sampling(sample_n_bytes=1024):
-    raise VMProfError("Allocation Sampling gc hook not initialized")
+    raise VMProfError("GC activation function not initialized")
 
 
 class VMProf(object):
@@ -56,7 +56,7 @@ class VMProf(object):
         self._cleanup_()
         self._code_unique_id = 4
         self.cintf = cintf.setup()
-        self.gc_set_allocation_sampling = gc_set_allocation_sampling
+        self.sample_n_bytes = 0
 
     def _cleanup_(self):
         self.is_enabled = False
@@ -175,18 +175,26 @@ class VMProf(object):
         self._gather_all_code_objs()
         res = self.cintf.vmprof_enable(0, 0, 0)
 
-        _vmprof_instance.gc_set_allocation_sampling(sample_n_bytes)
+        #_get_gc_hook_wrapper().gc_set_allocation_sampling(sample_n_bytes)
 
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
-        os.write(2, "vmprof allocation sampling activated\n") 
+        os.write(2, "vmprof allocation sampling activated in rvmprof.py \n") 
+        #self.cintf.vmprof_say_hi()
+        #os.write(2, "vmprof should have said hello\n") 
 
     @jit.dont_look_inside
     @rgc.no_collect
-    def sample_stack_now(self):
-        os.write(2, "vmprof allocation sample triggered\n") 
-        #self.cintf.vmprof_sample_stack_now_gc_triggered()
+    def sample_stack_now(self, gc):
+        #os.write(2, "vmprof allocation sample triggered\n") 
+        #self.cintf.vmprof_say_hi()
+        self.cintf.vmprof_sample_stack_now_gc_triggered()
+    
+    @jit.dont_look_inside
+    @rgc.no_collect
+    def vmprof_say_hi(self):
+        self.cintf.vmprof_say_hi()
 
     @jit.dont_look_inside
     def disable(self):

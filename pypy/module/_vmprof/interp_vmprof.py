@@ -78,6 +78,16 @@ def enable_allocation_triggered(space, fileno, sample_n_bytes=1024):
     except rvmprof.VMProfError as e:
         raise VMProfError(space, e)
 
+def sample_stack_now(space):
+    """Sample Stack now. Only for testing.
+    Should only be called from inside the gc.
+    """
+    try:
+        from rpython.rlib.rvmprof import _get_vmprof
+        _get_vmprof().cintf.vmprof_sample_stack_now_gc_triggered()
+    except rvmprof.VMProfError as e:
+        raise VMProfError(space, e)
+
 def disable(space):
     """Disable vmprof.  Remember to close the file descriptor afterwards
     if necessary.

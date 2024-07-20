@@ -38,6 +38,14 @@ def enable(fileno, interval, memory=0, native=0, real_time=0):
 def enable_allocation_triggered(fileno, sample_n_bytes=1024):
     _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes)
 
+
+# For testing
+def sample_stack_now():
+    _get_vmprof().sample_stack_now()
+
+def vmprof_say_hi():
+    _get_vmprof().vmprof_say_hi()
+
 def disable():
     _get_vmprof().disable()
 

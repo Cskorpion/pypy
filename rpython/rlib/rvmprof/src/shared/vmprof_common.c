@@ -77,7 +77,7 @@ void vmprof_set_profile_interval_usec(long value) {
 char *vmprof_init(int fd, double interval, int memory,
                   int proflines, const char *interp_name, int native, int real_time)
 {
-    if (!(interval >= 1e-6 && interval < 1.0)) {   /* also if it is NaN */
+    if (!((interval >= 1e-6 && interval < 1.0) || interval == 0)) {   /* also if it is NaN */ // can be 0 for allocation based sampling 
         return "bad value for 'interval'";
     }
     prepare_interval_usec = (int)(interval * 1000000.0);
@@ -85,12 +85,14 @@ char *vmprof_init(int fd, double interval, int memory,
     if (prepare_concurrent_bufs() < 0)
         return "out of memory";
 #if VMPROF_UNIX
-    if (real_time) {
-        signal_type = SIGALRM;
-        itimer_type = ITIMER_REAL;
-    } else {
-        signal_type = SIGPROF;
-        itimer_type = ITIMER_PROF;
+    if(interval != 0) {
+        if (real_time) {
+            signal_type = SIGALRM;
+            itimer_type = ITIMER_REAL;
+        } else {
+            signal_type = SIGPROF;
+            itimer_type = ITIMER_PROF;
+        }
     }
     set_current_codes(NULL);
     assert(fd >= 0);

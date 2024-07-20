@@ -18,6 +18,7 @@ class Module(MixedModule):
         'stop_sampling': 'interp_vmprof.stop_sampling',
         'start_sampling': 'interp_vmprof.start_sampling',
         'enable_allocation_triggered': 'interp_vmprof.enable_allocation_triggered',
+        'sample_stack_now': 'interp_vmprof.sample_stack_now',
 
         'VMProfError': 'space.fromcache(interp_vmprof.Cache).w_VMProfError',
     }

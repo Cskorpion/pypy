@@ -32,7 +32,7 @@
 RPY_EXTERN void vmprof_ignore_signals(int ignored);
 RPY_EXTERN long vmprof_enter_signal(void);
 RPY_EXTERN long vmprof_exit_signal(void);
-
+RPY_EXTERN int vmprof_say_hi(void);
 /* *************************************************************
  * functions to dump the stack trace
  * *************************************************************
@@ -51,7 +51,7 @@ int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, i
 #include <setjmp.h>
 
 void segfault_handler(int arg);
-int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc);
+int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type);
 void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext);
 
 
@@ -83,6 +83,8 @@ int vmprof_disable(void);
 RPY_EXTERN
 int vmprof_register_virtual_function(char *code_name, intptr_t code_uid,
                                      int auto_retry);
+RPY_EXTERN 
+int vmprof_sample_stack_now_gc_triggered(void);
 
 
 void vmprof_aquire_lock(void);

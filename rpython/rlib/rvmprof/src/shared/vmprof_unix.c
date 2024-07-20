@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <time.h>
+#include <ucontext.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -86,11 +87,46 @@ void segfault_handler(int arg)
     longjmp(restore_point, SIGSEGV);
 }
 
-int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc)
+#ifdef RPYTHON_VMPROF
+int vmprof_sample_stack_now_gc_triggered(void) {
+    /* This function will be called from PyPy's GC */
+    //printf("gc sample triggered \n");
+
+    int fd = vmp_profile_fileno();
+    assert(fd >= 0);
+
+    struct profbuf_s *p = reserve_buffer(fd);
+    ucontext_t uc;
+
+    if (p == NULL ) {
+        return -1; // Couldn't get free Bufffer 
+    } else if (getcontext(&uc) == -1) {
+        return -2; // Couldn't get user context
+    }
+
+    int commit = _vmprof_sample_stack(p, NULL, &uc, MARKER_GC_STACKTRACE);
+
+    if (commit) {
+        commit_buffer(fd, p);
+    } else {
+        cancel_buffer(p);
+        return 0; // Could not sample stack
+    }
+
+    return 1;
+}
+#endif
+
+int vmprof_say_hi(void) {
+    printf("vmprof says hi from vmprof_unix.c \n");
+    return 7;
+}
+
+int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type)
 {
     int depth;
     struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
-    st->marker = MARKER_STACKTRACE;
+    st->marker = marker_type;
     st->count = 1;
 #ifdef RPYTHON_VMPROF
     depth = get_stack_trace(get_vmprof_stack(), st->stack, MAX_STACK_DEPTH-1, (intptr_t)GetPC(uc));
@@ -241,9 +277,9 @@ void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext)
             /* ignore this signal: there are no free buffers right now */
         } else {
 #ifdef RPYTHON_VMPROF
-            commit = _vmprof_sample_stack(p, NULL, (ucontext_t*)ucontext);
+            commit = _vmprof_sample_stack(p, NULL, (ucontext_t*)ucontext, MARKER_STACKTRACE);
 #else
-            commit = _vmprof_sample_stack(p, tstate, (ucontext_t*)ucontext);
+            commit = _vmprof_sample_stack(p, tstate, (ucontext_t*)ucontext, MARKER_STACKTRACE);
 #endif
             if (commit) {
                 commit_buffer(fd, p);
@@ -356,7 +392,7 @@ int vmprof_enable(int memory, int native, int real_time)
     init_cpyprof(native);
 #endif
     assert(vmp_profile_fileno() >= 0);
-    assert(vmprof_get_prepare_interval_usec() > 0);
+    assert(vmprof_get_prepare_interval_usec() >= 0); // Allow 0 here
     vmprof_set_profile_interval_usec(vmprof_get_prepare_interval_usec());
     if (memory && setup_rss() == -1)
         goto error;
@@ -366,10 +402,13 @@ int vmprof_enable(int memory, int native, int real_time)
 #endif
     if (install_pthread_atfork_hooks() == -1)
         goto error;
-    if (install_sigprof_handler() == -1)
-        goto error;
-    if (install_sigprof_timer() == -1)
-        goto error;
+    // Dont install timer and handler if period == 0
+    if(vmprof_get_profile_interval_usec() != 0) { 
+        if (install_sigprof_handler() == -1)
+            goto error;
+        if (install_sigprof_timer() == -1)
+            goto error;
+    }
     signal_handler_ignore = 0;
     return 0;
 
@@ -399,12 +438,14 @@ int vmprof_disable(void)
 #ifdef VMP_SUPPORTS_NATIVE_PROFILING
     disable_cpyprof();
 #endif
-
-    if (remove_sigprof_timer() == -1) {
-        return -1;
-    }
-    if (remove_sigprof_handler() == -1) {
-        return -1;
+    // period == 0 => no timer installed => not timer to remove
+    if(vmprof_get_profile_interval_usec() != 0 && vmprof_get_prepare_interval_usec() != 0) {
+        if (remove_sigprof_timer() == -1) {
+            return -1;
+        }
+        if (remove_sigprof_handler() == -1) {
+            return -1;
+        }
     }
 #ifdef VMPROF_UNIX
     if ((vmprof_get_signal_type() == SIGALRM) && remove_threads() == -1) {

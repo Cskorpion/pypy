@@ -20,6 +20,9 @@ class DummyVMProf(object):
     def enable_allocation_triggered(self, fileno, sample_n_bytes=1024):
         pass
 
+    def vmprof_say_hi(self):
+        pass
+
     def sample_stack_now(self):
         pass
 
