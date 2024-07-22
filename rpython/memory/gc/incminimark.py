@@ -383,10 +383,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.sample_point = self.nursery_top
         self.reset_sample_point_after_collect = False
         self.sample_point_after_collect = self.nursery_top # TODO: Think of better init value
-            
-        # Place function into vmprof to enable/disable sampling at runtime
-        #_get_vmprof().gc_set_allocation_sampling = gc_set_allocation_sampling
-        #_get_vmprof().vmprof_say_hi()
 
 
     def setup(self):
@@ -544,25 +540,27 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # Estimate this number conservatively
             bigobj = self.nonlarge_max + 1
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
-        #_get_vmprof().vmprof_say_hi()
-        #self.gc_set_allocation_sampling(_get_vmprof().sample_n_bytes)
-
-    #def gc_set_allocation_sampling(self, sample_n_bytes=1024):
-        #assert sample_n_bytes % 3 == 0 # I want to know if this gets executed
-        #if sample_n_bytes == 0:
-            #self.allocation_sampling = False
-            #self.sample_allocated_bytes = 0
-            #self.nursery_top = self.nursery + self.nursery_size
-            #self.real_nursery_top = self.nursery_top
-            #self.sample_point = self.nursery
-        #else:
-            #assert sample_n_bytes % WORD == 0
-            #self.allocation_sampling = True
-            #self.sample_allocated_bytes = sample_n_bytes
-            #self.sample_point = self.nursery + self.sample_allocated_bytes
-            #self.nursery_top = self.sample_point # set nursery to first sampling point
-            #self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
-            #self._vmprof_allocation_sample_now = _get_vmprof().sample_stack_now
+        
+    def gc_set_allocation_sampling(self, sample_n_bytes=1024):
+        if sample_n_bytes == 0:
+            self.allocation_sampling = False
+            self.sample_allocated_bytes = 0
+            self.nursery_top = self.nursery + self.nursery_size
+            self.real_nursery_top = self.nursery_top
+            self.sample_point = self.nursery
+        else:
+            assert sample_n_bytes % WORD == 0
+            self.allocation_sampling = True
+            self.sample_allocated_bytes = sample_n_bytes
+            # TODO: Assert that nursery + sample_n_bytes < nursery size
+            self.sample_point = self.nursery + self.sample_allocated_bytes
+            self.nursery_top = self.sample_point # set nursery to first sampling point
+            self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
+            self._vmprof_allocation_sample_now = _get_vmprof().sample_stack_now
+        return True
+            
+        # Place function into vmprof to enable/disable sampling at runtime
+        #_get_vmprof().gc_set_allocation_sampling = gc_set_allocation_sampling
 
     def enable(self):
         self.enabled = True
@@ -688,7 +686,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
                                needs_finalizer=False,
                                is_finalizer_light=False,
                                contains_weakptr=False):
-        #self.gc_set_allocation_sampling(_get_vmprof().sample_n_bytes)
         size_gc_header = self.gcheaderbuilder.size_gc_header
         totalsize = size_gc_header + size
         rawtotalsize = raw_malloc_usage(totalsize)
@@ -743,7 +740,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
     def malloc_varsize(self, typeid, length, size, itemsize,
                              offset_to_length):
-        #self.gc_set_allocation_sampling(_get_vmprof().sample_n_bytes)
         size_gc_header = self.gcheaderbuilder.size_gc_header
         nonvarsize = size_gc_header + size
         #
@@ -813,7 +809,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
     def malloc_fixed_or_varsize_nonmovable(self, typeid, length):
         # length==0 for fixedsize
-        #self.gc_set_allocation_sampling(_get_vmprof().sample_n_bytes)
         obj = self.external_malloc(typeid, length, alloc_young=True)
         return llmemory.cast_adr_to_ptr(obj, llmemory.GCREF)
 
@@ -934,7 +929,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # Allocation triggered profiling with VMProf
             # assume short circuit
             if self.allocation_sampling and self.nursery_top == self.sample_point:# sample_point == None if sampling disabled
-                self._vmprof_allocation_sample_now(self)
+                #self._vmprof_allocation_sample_now(self)
                 ### offset cannot be used here => TODO: find way to check size without triggering an Error
                 if self._bump_pointer(self.sample_point, self.sample_allocated_bytes) >= self.real_nursery_top:
                 #if self.sample_point.offset + self.sample_allocated_bytes >= self.real_nursery_top.offset:# this raises an error in translation 

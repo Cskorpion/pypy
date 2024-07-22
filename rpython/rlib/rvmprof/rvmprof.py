@@ -8,6 +8,7 @@ from rpython.rtyper.annlowlevel import cast_base_ptr_to_instance
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi
 from rpython.rtyper.lltypesystem.lloperation import llop
 from rpython.rlib.rweaklist import RWeakListMixin
+from rpython.rlib.nonconst import NonConstant
 
 MAX_FUNC_NAME = 1023
 
@@ -36,7 +37,8 @@ class FakeWeakCodeObjectList(object):
         return []
     
 def gc_set_allocation_sampling(sample_n_bytes=1024):
-    raise VMProfError("GC activation function not initialized")
+    if not llop.gc_set_allocation_sampling(lltype.Bool, sample_n_bytes):
+        raise VMProfError("GC activation function not initialized")
 
 
 class VMProf(object):
@@ -57,6 +59,7 @@ class VMProf(object):
         self._code_unique_id = 4
         self.cintf = cintf.setup()
         self.sample_n_bytes = 0
+        self.gc_set_allocation_sampling = gc_set_allocation_sampling
 
     def _cleanup_(self):
         self.is_enabled = False
@@ -175,20 +178,21 @@ class VMProf(object):
         self._gather_all_code_objs()
         res = self.cintf.vmprof_enable(0, 0, 0)
 
-        #_get_gc_hook_wrapper().gc_set_allocation_sampling(sample_n_bytes)
+        #if not llop.gc_set_allocation_sampling(sample_n_bytes):
+        #    raise VMProfError("GC activation function not initialized or wrong GC")
+
+        set_alloc_sampling = self.gc_set_allocation_sampling
+        set_alloc_sampling(sample_n_bytes)
 
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
         os.write(2, "vmprof allocation sampling activated in rvmprof.py \n") 
-        #self.cintf.vmprof_say_hi()
-        #os.write(2, "vmprof should have said hello\n") 
 
     @jit.dont_look_inside
     @rgc.no_collect
     def sample_stack_now(self, gc):
-        #os.write(2, "vmprof allocation sample triggered\n") 
-        #self.cintf.vmprof_say_hi()
+        os.write(2, "vmprof allocation sample triggered\n") 
         self.cintf.vmprof_sample_stack_now_gc_triggered()
     
     @jit.dont_look_inside
