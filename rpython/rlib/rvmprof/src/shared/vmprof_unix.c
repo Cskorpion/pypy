@@ -90,7 +90,7 @@ void segfault_handler(int arg)
 #ifdef RPYTHON_VMPROF
 int vmprof_sample_stack_now_gc_triggered(void) {
     /* This function will be called from PyPy's GC */
-    //printf("gc sample triggered \n");
+    printf("gc sample triggered \n");
 
     int fd = vmp_profile_fileno();
     assert(fd >= 0);
@@ -98,7 +98,7 @@ int vmprof_sample_stack_now_gc_triggered(void) {
     struct profbuf_s *p = reserve_buffer(fd);
     ucontext_t uc;
 
-    if (p == NULL ) {
+    if (p == NULL) {
         return -1; // Couldn't get free Bufffer 
     } else if (getcontext(&uc) == -1) {
         return -2; // Couldn't get user context

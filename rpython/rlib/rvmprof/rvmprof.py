@@ -60,6 +60,8 @@ class VMProf(object):
         self.cintf = cintf.setup()
         self.sample_n_bytes = 0
         self.gc_set_allocation_sampling = gc_set_allocation_sampling
+        if NonConstant(False):
+            self.gc_set_allocation_sampling = "gc"
 
     def _cleanup_(self):
         self.is_enabled = False
@@ -178,8 +180,7 @@ class VMProf(object):
         self._gather_all_code_objs()
         res = self.cintf.vmprof_enable(0, 0, 0)
 
-        #if not llop.gc_set_allocation_sampling(sample_n_bytes):
-        #    raise VMProfError("GC activation function not initialized or wrong GC")
+        self.sample_n_bytes = sample_n_bytes
 
         set_alloc_sampling = self.gc_set_allocation_sampling
         set_alloc_sampling(sample_n_bytes)
@@ -191,12 +192,10 @@ class VMProf(object):
 
     @jit.dont_look_inside
     @rgc.no_collect
-    def sample_stack_now(self, gc):
-        os.write(2, "vmprof allocation sample triggered\n") 
+    def sample_stack_now(self):
         self.cintf.vmprof_sample_stack_now_gc_triggered()
     
-    @jit.dont_look_inside
-    @rgc.no_collect
+    #@jit.dont_look_inside
     def vmprof_say_hi(self):
         self.cintf.vmprof_say_hi()
 
@@ -207,6 +206,10 @@ class VMProf(object):
         """
         if not self.is_enabled:
             raise VMProfError("vmprof is not enabled")
+        
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(0)
         self.is_enabled = False
         res = self.cintf.vmprof_disable()
         if res < 0:

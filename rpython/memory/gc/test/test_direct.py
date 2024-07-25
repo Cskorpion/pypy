@@ -798,14 +798,13 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         from rpython.rlib.rvmprof import _get_vmprof
 
-        vmp_obj = _get_vmprof()
 
-        assert hasattr(vmp_obj, "gc_set_allocation_sampling")
+        assert hasattr(self.gc, "gc_set_allocation_sampling")
 
         assert self.gc.sample_allocated_bytes == 128
         assert self.gc.sample_point.offset == 128
 
-        vmp_obj.gc_set_allocation_sampling(384)
+        self.gc.gc_set_allocation_sampling(384)
 
         assert self.gc.sample_allocated_bytes == 384
         assert self.gc.sample_point.offset == 384
@@ -814,21 +813,71 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         from rpython.rlib.rvmprof import _get_vmprof
 
-        vmp_obj = _get_vmprof()
-
-        assert hasattr(vmp_obj, "gc_set_allocation_sampling")
+        assert hasattr(self.gc, "gc_set_allocation_sampling")
 
         assert self.gc.allocation_sampling
         assert self.gc.sample_allocated_bytes == 128
         assert self.gc.sample_point.offset == 128
 
-        vmp_obj.gc_set_allocation_sampling(0)
+        self.gc.gc_set_allocation_sampling(0)
 
         assert self.gc.allocation_sampling == False # this bool disables all gc-sampling functionality
         assert self.gc.sample_allocated_bytes == 0
         assert self.gc.sample_point.offset == self.gc.nursery.offset
-        
 
+def test_vmprof_allocation_based_sampling_eight_samples(self):
+        
+        def dummy_trigger_func(gc):
+            if "allocation_sample_dummy" not in gc.__dict__.keys():
+                gc.allocation_sample_dummy = 1
+            else:
+                gc.allocation_sample_dummy += 1
+
+        self.gc.gc_set_allocation_sampling(64)
+
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        assert self.gc.allocation_sampling
+        assert self.gc.sample_allocated_bytes == 64
+        assert self.gc.sample_point.offset == 64
+
+
+        for _ in range(16): # this overflows the 64 byte sampling point 7 times
+            self.malloc(S)
+        
+        self.malloc(S) # one more
+
+        assert self.gc.allocation_sample_dummy == 8
+
+    def test_vmprof_allocation_based_sampling_many_samples(self):
+        
+        def dummy_trigger_func(gc):
+            if "allocation_sample_dummy" not in gc.__dict__.keys():
+                gc.allocation_sample_dummy = 1
+            else:
+                gc.allocation_sample_dummy += 1
+
+        self.gc.gc_set_allocation_sampling(128)
+
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        assert self.gc.allocation_sampling
+        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_point.offset == 128
+
+
+        for _ in range(256): # this overflows the 64 byte sampling point 127 times
+            self.malloc(S)
+        
+        self.malloc(S) # one more
+
+        assert self.gc.allocation_sample_dummy == 64
+    
+        
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass

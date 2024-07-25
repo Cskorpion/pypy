@@ -1679,14 +1679,15 @@ class BaseFrameworkGCTransformer(GCTransformer):
                    hop.spaceop.args[0]])
 
     def gct_gc_set_allocation_sampling(self, hop):
+        op = hop.spaceop
         if self.gc_set_allocation_sampling_ptr is None:
-            op = hop.spaceop
             hop.genop("same_as",
                     [rmodel.inputconst(lltype.Bool, False)],
                     resultvar=op.result)
         else:
-            hop.genop("direct_call", [self.gc_set_allocation_sampling_ptr, self.c_const_gc, op.args[0]],
-                  resultvar=op.result)
+            hop.genop("direct_call",
+                    [self.gc_set_allocation_sampling_ptr, self.c_const_gc, op.args[0]],
+                    resultvar=op.result)
 
 
 
