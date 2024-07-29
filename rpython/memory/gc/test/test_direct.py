@@ -825,7 +825,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.sample_allocated_bytes == 0
         assert self.gc.sample_point.offset == self.gc.nursery.offset
 
-def test_vmprof_allocation_based_sampling_eight_samples(self):
+    def test_vmprof_allocation_based_sampling_eight_samples(self):
         
         def dummy_trigger_func(gc):
             if "allocation_sample_dummy" not in gc.__dict__.keys():

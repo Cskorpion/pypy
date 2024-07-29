@@ -175,7 +175,4 @@ class AppTestVMProf(object):
 
         s = open(self.tmpfilename, "rb").read()
 
-        with open("/mnt/c/Users/Christoph/Documents/Uni/Projektarbeit/output", "wb") as f:
-            f.write(s)
-    
         assert s.count(MARKER_GC_STACKTRACE) == 4 or s.count(MARKER_GC_STACKTRACE) == 5 # sometimes there is a 0x09 in there that is not a marker

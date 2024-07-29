@@ -228,6 +228,10 @@ class VMProf(object):
         Temporarily stop the sampling of stack frames. Signals are still
         delivered, but are ignored.
         """
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(0)
+
         fd = self.cintf.vmprof_stop_sampling()
         return rffi.cast(lltype.Signed, fd)
 
@@ -235,6 +239,10 @@ class VMProf(object):
         """
         Undo the effect of stop_sampling
         """
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(self.sample_n_bytes)
+            
         self.cintf.vmprof_start_sampling()
 
 
