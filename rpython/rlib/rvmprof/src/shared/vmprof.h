@@ -28,6 +28,7 @@
 #define VERSION_MODE_AWARE '\x04'
 #define VERSION_DURATION '\x05'
 #define VERSION_TIMESTAMP '\x06'
+#define VERSION_SAMPLE_TIMEOFFSET '\x07'
 
 #define PROFILE_MEMORY '\x01'
 #define PROFILE_LINES  '\x02'

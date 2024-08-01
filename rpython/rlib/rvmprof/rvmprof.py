@@ -188,7 +188,7 @@ class VMProf(object):
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
-        os.write(2, "vmprof allocation sampling activated in rvmprof.py \n") 
+        #os.write(2, "vmprof allocation sampling activated in rvmprof.py \n") 
 
     @jit.dont_look_inside
     @rgc.no_collect

@@ -90,7 +90,7 @@ void segfault_handler(int arg)
 #ifdef RPYTHON_VMPROF
 int vmprof_sample_stack_now_gc_triggered(void) {
     /* This function will be called from PyPy's GC */
-    printf("gc sample triggered \n");
+    //printf("gc sample triggered \n");
 
     int fd = vmp_profile_fileno();
     assert(fd >= 0);
@@ -127,7 +127,7 @@ int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, uconte
     int depth;
     struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
     st->marker = marker_type;
-    st->count = 1;
+    st->sample_offset = vmp_get_time();
 #ifdef RPYTHON_VMPROF
     depth = get_stack_trace(get_vmprof_stack(), st->stack, MAX_STACK_DEPTH-1, (intptr_t)GetPC(uc));
 #else
