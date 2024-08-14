@@ -356,10 +356,12 @@ void atfork_disable_timer(void)
 
 void atfork_close_profile_file(void)
 {
-    int fd = vmp_profile_fileno();
-    if (fd != -1)
-        close(fd);
-    vmp_set_profile_fileno(-1);
+    /* Disabled. Not Needed for gc-allocation-sampling. Causes fd to close without reopening it.
+     * Needed for timed-sampling */
+    //int fd = vmp_profile_fileno();
+    //if (fd != -1)
+    //    close(fd);
+    //vmp_set_profile_fileno(-1);
 }
 void atfork_enable_timer(void)
 {
