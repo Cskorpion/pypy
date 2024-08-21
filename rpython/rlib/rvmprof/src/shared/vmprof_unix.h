@@ -64,9 +64,9 @@ int install_sigprof_handler(void);
 int remove_sigprof_handler(void);
 int install_sigprof_timer(void);
 int remove_sigprof_timer(void);
-void atfork_disable_timer(void);
-void atfork_enable_timer(void);
-void atfork_close_profile_file(void);
+void atfork_vmprof_parent_disable_timer(void);
+void atfork_vmprof_parent_enable_timer(void);
+void atfork_vmprof_child_close_profile_file(void);
 int install_pthread_atfork_hooks(void);
 
 #ifdef VMP_SUPPORTS_NATIVE_PROFILING
