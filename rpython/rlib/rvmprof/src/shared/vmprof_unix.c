@@ -75,7 +75,7 @@ int install_pthread_atfork_hooks(void) {
     */
     if (atfork_hook_installed)
         return 0;
-    int ret = pthread_atfork(atfork_disable_timer, atfork_enable_timer, atfork_close_profile_file);
+    int ret = pthread_atfork(atfork_vmprof_parent_disable_timer, atfork_vmprof_parent_enable_timer, atfork_vmprof_child_close_profile_file);
     if (ret != 0)
         return -1;
     atfork_hook_installed = 1;
@@ -119,7 +119,7 @@ int vmprof_sample_stack_now_gc_triggered(void) {
 
 int vmprof_say_hi(void) {
     printf("vmprof says hi from vmprof_unix.c \n");
-    return 7;
+    return 0;
 }
 
 int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type)
@@ -346,7 +346,7 @@ int remove_sigprof_timer(void)
     return 0;
 }
 
-void atfork_disable_timer(void)
+void atfork_vmprof_parent_disable_timer(void)
 {
     if (vmprof_get_profile_interval_usec() > 0) {
         remove_sigprof_timer();
@@ -354,7 +354,7 @@ void atfork_disable_timer(void)
     }
 }
 
-void atfork_close_profile_file(void)
+void atfork_vmprof_child_close_profile_file(void)
 {
     /* Disabled. Not Needed for gc-allocation-sampling. Causes fd to close without reopening it.
      * Needed for timed-sampling */
@@ -363,7 +363,7 @@ void atfork_close_profile_file(void)
     //    close(fd);
     //vmp_set_profile_fileno(-1);
 }
-void atfork_enable_timer(void)
+void atfork_vmprof_parent_enable_timer(void)
 {
     if (vmprof_get_profile_interval_usec() > 0) {
         install_sigprof_timer();

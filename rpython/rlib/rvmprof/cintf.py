@@ -123,9 +123,12 @@ def setup():
                                     rffi.INT,
                                     compilation_info=eci,
                                     save_err=rffi.RFFI_SAVE_ERRNO)
+    #   Its very important that this function does not release the gil
     vmprof_sample_stack_now_gc_triggered = rffi.llexternal("vmprof_sample_stack_now_gc_triggered", [], rffi.INT,
                                                            compilation_info=eci,
-                                                           save_err=rffi.RFFI_SAVE_ERRNO)
+                                                           save_err=rffi.RFFI_SAVE_ERRNO,
+                                                           releasegil=False)
+
     vmprof_say_hi = rffi.llexternal("vmprof_say_hi", [], rffi.INT,
                                      compilation_info=eci,
                                      save_err=rffi.RFFI_SAVE_ERRNO)

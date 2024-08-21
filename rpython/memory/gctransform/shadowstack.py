@@ -229,6 +229,7 @@ class ShadowStackRootWalker(BaseRootWalker):
                 tid = get_tid()
                 gcdata.main_tid = tid
                 gcdata.active_tid = tid
+            gcdata.gc.after_fork(result_of_fork)
 
         self.thread_setup = thread_setup
         self.thread_run_ptr = getfn(thread_run, [], annmodel.s_None,
