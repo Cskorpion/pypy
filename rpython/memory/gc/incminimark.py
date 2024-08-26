@@ -550,16 +550,20 @@ class IncrementalMiniMarkGC(MovingGCBase):
         
     def gc_set_allocation_sampling(self, sample_n_bytes=1024):
         self.vmp_cintf = _get_vmprof().cintf
-        # TODO: This makes no sense
-        self._init_by_vmprof = True
         if sample_n_bytes == 0:
             self._disable_gc_sampling()
         else:
             assert sample_n_bytes % WORD == 0
+            # if sampling was already on, we disable it and try to reenable it with the new sampling_rate
+            self._disable_gc_sampling()
+            if self.nursery_top - self.nursery_free < sample_n_bytes:
+                # cant do sampling, sampling_point does not fit in nursery
+                # TODO: Implement mechanism to use sampling_rates larger than nursery
+                return False
             self.allocation_sampling = True
             self.sample_allocated_bytes = sample_n_bytes
-            # TODO: Assert that nursery + sample_n_bytes < nursery size
-            self.sample_point = self.nursery + self.sample_allocated_bytes
+            # Maybe error was here cant set to nursery + sample_n_bytes
+            self.sample_point = self.nursery_free + self.sample_allocated_bytes
             self.nursery_top = self.sample_point # set nursery to first sampling point
             self.real_nursery_top = self.nursery + self.nursery_size # save 'real' nursery top
         return True
@@ -571,11 +575,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
     # vmprof cintf access only in this func, to make tests simpler
     def _vmprof_allocation_sample_now(self, gc):
-        if self._init_by_vmprof:
-            self.vmp_cintf.vmprof_sample_stack_now_gc_triggered()
-        else:
-            # Maybe raise Error here
-            pass
+        self.vmp_cintf.vmprof_sample_stack_now_gc_triggered()
+
 
     def enable(self):
         self.enabled = True
@@ -933,6 +934,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         minor_collection_count = 0
 
         init_free = self.nursery_free # for returning after sampling#
+        new_nursery_free = self.nursery
         # Instead of sampling directly we increment a counter 
         # Needed because if after collection totalsize still doesnt fit we would sample to much
         samples_todo = 0
@@ -940,6 +942,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         was_reset_in_sampling_loop = False
 
         while True:
+            new_nursery_free = self.nursery_free
             self.nursery_free = llmemory.NULL      # debug: don't use me
             # note: no "raise MemoryError" between here and the next time
             # we initialize nursery_free!
@@ -956,7 +959,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
                 while self.nursery_top != self.real_nursery_top or (self.real_nursery_top == self.sample_point):
 
-                    # Instead of sampling here, we increment a counter 
+                    # Instead of sampling here, increment a counter 
                     samples_todo += 1 
 
                     if self.real_nursery_top - self.sample_point < self.sample_allocated_bytes:
@@ -973,20 +976,22 @@ class IncrementalMiniMarkGC(MovingGCBase):
                         self.nursery_top = self.sample_point = new_sample_point
                         # nursery top moved => now do try to alloc
                         # Here we need to check if we can allocate now
-                        # Depending on if there has been a minor_collection/barrier jump we need to check init free or nursery_free
+                        # Depending on if there has been a minor_collection/barrier jump we need to check init free or new_nursery_free
                         if was_reset_in_sampling_loop:
-                            if self._bump_pointer(self.nursery_free, totalsize) <= self.nursery_top:
+                            # Use new_nursery_free here because self.nursery_free is set to NULL at loop entry
+                            if totalsize <= self.nursery_top - new_nursery_free:
                                 break
                         else:
                             if init_free <= self.nursery_top:
                                 # init_free is former free + totalsize and since we dont collect or jump over barrier we need to subtract totalsize
+                                #self.vmp_cintf.vmprof_say_hi(1)
                                 break # enough space to reserve => break loop and return
                         # if there is still not enough space continue
 
                 if was_reset_in_sampling_loop:
-                    new_free =  self._bump_pointer(self.nursery_free, totalsize)
+                    new_free = self._bump_pointer(new_nursery_free, totalsize)
                     if new_free <= self.nursery_top:
-                        result = self.nursery_free
+                        result = new_nursery_free
                         self.nursery_free = new_free
                         ll_assert(self.nursery_free <= self.nursery_top, "nursery overflow")
                         break
@@ -995,8 +1000,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                         result = init_free - totalsize # since no collection or jumping needed, subtract totalsize
                         self.nursery_free = init_free
                         ll_assert(self.nursery_free <= self.nursery_top, "nursery overflow")
-                        break
-                        # enough space to reserve => break loop and return
+                        break # enough space to reserve => break loop and return
 
             if self.nursery_barriers.non_empty():
                 # Pinned object in front of nursery_top. Try reserving totalsize
@@ -1032,16 +1036,18 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 self.nursery_top = self.nursery_barriers.popleft()
 
                 # Allocation triggered profiling with VMProf
-                if self.allocation_sampling and self.sample_point:
-                    if self.real_nursery_top - self.sample_point <= self.sample_allocated_bytes:
+                if self.allocation_sampling:
+                    if self.sample_allocated_bytes <= self.nursery_top - self.nursery_free:
                         self.real_nursery_top = self.nursery_top
                         self.nursery_top = self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes)
-                        # if we cannot alloc now reset sample counter and go back to sampling loop
+                        ll_assert(self.nursery_top <= self.real_nursery_top, "Nursery Top overflows Nursery")
+                        # if we cannot allocate now => reset sample counter and go back to sampling loop
                         reset_in_sampling_loop = True
-                    # No else branch, if new sample point wouldnt fit it will be set after minor collection
+                    # No else branch, if new sample point wouldnt fit it will be set after minor collection, or next pinned obj
+                    # Also no need to disable sampling, because at this point it must be disabled already
             else:
                 minor_collection_count += 1
-                if self.allocation_sampling and self.sample_point:
+                if self.allocation_sampling:
                     reset_in_sampling_loop = True
                 if minor_collection_count == 1:
                     self.minor_collection_with_major_progress()
@@ -1080,7 +1086,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             if self.nursery_top - self.nursery_free > self.debug_tiny_nursery:
                 self.nursery_free = self.nursery_top - self.debug_tiny_nursery
         #
-        if self.allocation_sampling and self.sample_point:
+        if self.allocation_sampling:
             for _ in range(samples_todo):
                 self._vmprof_allocation_sample_now(self)
 
@@ -2084,13 +2090,14 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.nursery_top = self.nursery_barriers.popleft()
         # Allocation triggered profiling with VMProf
         if self.allocation_sampling:
-            if self.nursery_top - self.nursery_free >= self.sample_allocated_bytes:
+            if self.sample_allocated_bytes <= self.nursery_top - self.nursery_free:
                 self.real_nursery_top = self.nursery_top
                 self.nursery_top = self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes)
+                ll_assert(self.nursery_top <= self.real_nursery_top, "nursery overflow")
             else:
                 # remove current sample_point
                 self.sample_point = self.nursery
-                # sampling to be enabled again after minor_collect
+                # sampling to be enabled again after minor_collect, or pinned obj jump
                 self.real_nursery_top = self.nursery_top
 
         #
