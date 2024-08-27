@@ -542,18 +542,20 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
     
     def _disable_gc_sampling(self):
-        self.allocation_sampling = False
+        if self.allocation_sampling:
+            self.nursery_top = self.real_nursery_top
         self.sample_allocated_bytes = 0
-        self.nursery_top = self.nursery + self.nursery_size
         self.real_nursery_top = self.nursery_top
         self.sample_point = self.nursery
+        self.allocation_sampling = False
         
     def gc_set_allocation_sampling(self, sample_n_bytes=1024):
         self.vmp_cintf = _get_vmprof().cintf
         if sample_n_bytes == 0:
             self._disable_gc_sampling()
         else:
-            assert sample_n_bytes % WORD == 0
+            ll_assert(sample_n_bytes % WORD == 0, "Sampling size must be word aligned")
+            ll_assert(sample_n_bytes <= self.nursery_size, "Sample size must be smaller or equal to nursery size")
             # if sampling was already on, we disable it and try to reenable it with the new sampling_rate
             self._disable_gc_sampling()
             if self.nursery_top - self.nursery_free < sample_n_bytes:
@@ -570,7 +572,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
     
     def after_fork(self, result_of_fork):
         if result_of_fork == 0:
-            # If we are a child process, we must not sample, because vmprof closed the fd
+            # If we are a child process, we must not sample
             self._disable_gc_sampling()
 
     # vmprof cintf access only in this func, to make tests simpler
@@ -979,12 +981,13 @@ class IncrementalMiniMarkGC(MovingGCBase):
                         # Depending on if there has been a minor_collection/barrier jump we need to check init free or new_nursery_free
                         if was_reset_in_sampling_loop:
                             # Use new_nursery_free here because self.nursery_free is set to NULL at loop entry
-                            if totalsize <= self.nursery_top - new_nursery_free:
+                            new_free = self._bump_pointer(new_nursery_free, totalsize)
+                            if new_free <= self.nursery_top:
+                            #if totalsize <= self.nursery_top - new_nursery_free:
                                 break
                         else:
                             if init_free <= self.nursery_top:
                                 # init_free is former free + totalsize and since we dont collect or jump over barrier we need to subtract totalsize
-                                #self.vmp_cintf.vmprof_say_hi(1)
                                 break # enough space to reserve => break loop and return
                         # if there is still not enough space continue
 
@@ -1040,7 +1043,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
                     if self.sample_allocated_bytes <= self.nursery_top - self.nursery_free:
                         self.real_nursery_top = self.nursery_top
                         self.nursery_top = self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes)
-                        ll_assert(self.nursery_top <= self.real_nursery_top, "Nursery Top overflows Nursery")
                         # if we cannot allocate now => reset sample counter and go back to sampling loop
                         reset_in_sampling_loop = True
                     # No else branch, if new sample point wouldnt fit it will be set after minor collection, or next pinned obj
@@ -1089,6 +1091,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.allocation_sampling:
             for _ in range(samples_todo):
                 self._vmprof_allocation_sample_now(self)
+            
+            if samples_todo > 1:
+                debug_start("gc-vmprof-sample-huge")
+                debug_print("number of samples: ", samples_todo)
+                debug_stop("gc-vmprof-sample-huge")
 
         return result
     collect_and_reserve._dont_inline_ = True

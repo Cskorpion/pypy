@@ -8,7 +8,7 @@ see as the list of roots (stack and prebuilt objects).
 
 import py
 
-from hypothesis import strategies, given, assume, example
+from hypothesis import strategies, given, assume, example, settings, Verbosity, Phase
 
 from rpython.rtyper.lltypesystem import lltype, llmemory
 from rpython.memory.gctypelayout import TypeLayoutBuilder, FIN_HANDLER_ARRAY
@@ -869,6 +869,41 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.allocation_sample_counter == 1
 
+
+    def test_vmprof_pinnned_object_disable_bug(self):
+        
+        # Set dummy vmprof trigger function & activate sampling
+        self.gc._vmprof_allocation_sample_now = lambda x: None
+        self.gc.gc_set_allocation_sampling(128)
+
+
+        # allocate 3 times, one of the allocations pinned
+        self.malloc(S)
+        self.malloc(S)
+
+        s = self.malloc(STR, 1)
+        self.stackroots.append(s)
+
+        pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))# pinned obj at 64
+        assert pinned
+
+        assert self.gc.nursery_top.offset == 128
+
+        self.gc.collect()
+
+        assert self.gc.nursery_free.offset == 0
+        assert self.gc.nursery_top.offset == 64 # top should be 64 because of pinned obj
+        assert self.gc.real_nursery_top.offset == 64 # that is also the real nursery top 
+
+        self.gc.gc_set_allocation_sampling(0)
+
+        assert self.gc.nursery_free.offset == 0
+        assert self.gc.sample_point.offset == 0
+        # There was a bug, where the nursery top would be set to nursery_start + nursery_size after disable 
+        assert self.gc.nursery_top.offset == 64
+        assert self.gc.real_nursery_top.offset == 64
+
+
     def test_vmprof_allocation_based_sampling_many_samples(self):
         
         def dummy_trigger_func(gc):
@@ -1440,7 +1475,7 @@ def random_action_sequences(draw):
         identity = next_identity()
         model[identity] = Node(identity, get_obj_identity(previndex), get_obj_identity(nextindex))
         stackroots.append(identity)
-        add_action('malloc', identity, previndex, nextindex)
+        add_action('malloc', identity, previndex, nextindex, False)
 
     @gen_action("read", Node)
     def read():
@@ -1526,7 +1561,7 @@ def random_action_sequences(draw):
         stackroots.append(identity)
         add_action('malloc_string', value)
 
-    @gen_action("pin", str)
+    #@gen_action("pin", str)
     def pin():
         indexes = [index for index, identity in enumerate(stackroots) if isinstance(model[identity], str) and index not in pinned_indexes]
         index = draw(strategies.sampled_from(indexes))
@@ -1599,7 +1634,10 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
         self.test_random.im_func.GC_PARAMS = GC_PARAMS
         self.setup_method(self.test_random.im_func)
         self.gc.TEST_VISIT_SINGLE_STEP = random_data['visit_single_step']
-        self.gc._vmprof_allocation_sample_now = lambda x: None
+        def _allocation_sample_now(gc_instance):
+            self.allocation_sample_happend = True
+        self.gc._vmprof_allocation_sample_now = _allocation_sample_now
+        self.allocation_sample_happend = False
         self.gc.DEBUG = random_data['debug_level']
         self.make_prebuilts(random_data)
         self.pinned_strings = []
@@ -1722,8 +1760,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 obj = self.unerase_str(obj)
                 assert "".join(obj.chars) == actiondata[1]
 
-    from hypothesis import settings, Verbosity, Phase
-
+    from hypothesis import reproduce_failure
     @settings(verbosity=Verbosity.verbose, print_blob=True, phases=[Phase.explicit, Phase.reuse, Phase.generate])
     @given(random_action_sequences())
     def test_random(self, random_data):
@@ -1737,8 +1774,16 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 index, = actiondata
                 del self.stackroots[index]
             elif kind == "malloc": # alloc
-                identity, previd, nextid = actiondata
+                identity, previd, nextid, expect_sample = actiondata
+                #from pdb import set_trace
+                #set_trace()
                 p = self.malloc(self.NODE)
+                if expect_sample:
+                    #assert self.allocation_sample_happend
+                    self.allocation_sample_happend = False
+                else:
+                    #assert not self.allocation_sample_happend
+                    pass
                 p.x = identity
                 self.write(p, 'prev', self.erase(self.get_obj(previd)))
                 self.write(p, 'next', self.erase(self.get_obj(nextid)))
