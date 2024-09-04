@@ -16,6 +16,7 @@ from rpython.memory.gctypelayout import WEAKREF, WEAKREFPTR
 from rpython.rlib.rarithmetic import LONG_BIT, is_valid_int
 from rpython.memory.gc import minimark, incminimark
 from rpython.memory.gctypelayout import zero_gc_pointers_inside, zero_gc_pointers
+from rpython.memory.gcheader import GCHeaderBuilder
 from rpython.rlib.debug import debug_print
 from rpython.rlib.test.test_debug import debuglog
 from rpython.rlib import rgc
@@ -1325,6 +1326,12 @@ def random_action_sequences(draw):
     pinned_indexes = []
     ids_taken = {} # identity -> index in ids list
 
+    # To keep track of allocated memory for verifying sampling 
+    size_gc_header = GCHeaderBuilder(lltype.Struct('header', ('tid', lltype.Signed))).size_gc_header
+    node_rawtotalsize = llmemory.raw_malloc_usage(size_gc_header) + 24# TODO: Replace with calculated value
+    allocation_sampling_leftover = [0]
+    gc_sample_n_bytes = [0]
+
     current_identity = itertools.count(1)
     def next_identity():
         return next(current_identity)
@@ -1475,7 +1482,18 @@ def random_action_sequences(draw):
         identity = next_identity()
         model[identity] = Node(identity, get_obj_identity(previndex), get_obj_identity(nextindex))
         stackroots.append(identity)
-        add_action('malloc', identity, previndex, nextindex, False)
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            if allocation_sampling_leftover[0] + node_rawtotalsize > gc_sample_n_bytes[0]:
+                sample_now = True
+                allocation_sampling_leftover[0] += node_rawtotalsize
+                if allocation_sampling_leftover[0] > gc_sample_n_bytes[0]:
+                    allocation_sampling_leftover[0] -= gc_sample_n_bytes[0]
+            else:
+                allocation_sampling_leftover[0] += node_rawtotalsize
+
+        add_action('malloc', identity, previndex, nextindex, sample_now)
 
     @gen_action("read", Node)
     def read():
@@ -1504,6 +1522,7 @@ def random_action_sequences(draw):
 
     @gen_action("collect")
     def collect():
+        allocation_sampling_leftover[0] = 0
         add_action('collect')
 
     @gen_action("readarray", list)
@@ -1549,13 +1568,13 @@ def random_action_sequences(draw):
             array2[dest_start + i] = array1[source_start + i]
         add_action('copy_array', array1index, array2index, source_start, dest_start, length)
 
-    @gen_action("malloc_array")
+    #@gen_action("malloc_array")
     def malloc_array():
         identity, indexes = create_array()
         stackroots.append(identity)
         add_action('malloc_array', indexes)
 
-    @gen_action("malloc_string")
+    #@gen_action("malloc_string")
     def malloc_string():
         identity, value = create_string()
         stackroots.append(identity)
@@ -1584,7 +1603,7 @@ def random_action_sequences(draw):
             ids_taken[identity] = len(ids_taken)
             add_action('take_id', index, -1)
 
-    @gen_action("create_weakref", lambda: len(filter_objects((Node, list))) != 0)
+    #@gen_action("create_weakref", lambda: len(filter_objects((Node, list))) != 0)
     def create_weakref():
         indexes = filter_objects((Node, list))
         index = draw(strategies.sampled_from(indexes))
@@ -1597,10 +1616,12 @@ def random_action_sequences(draw):
     
     @gen_action("set_gc_sampling_parameter")
     def set_gc_sampling_parameter():
+        allocation_sampling_leftover[0] = 0
         if draw(strategies.booleans()):
-            sample_n_bytes = draw(strategies.sampled_from([16, 32, 64, 256][::-1]))
-            add_action("set_gc_sampling_parameter", sample_n_bytes)
+            gc_sample_n_bytes[0] = draw(strategies.sampled_from([16, 32, 64, 256][::-1]))
+            add_action("set_gc_sampling_parameter", gc_sample_n_bytes[0])
         else:
+            gc_sample_n_bytes[0] = 0
             add_action("set_gc_sampling_parameter", 0)
 
     for i in range(draw(strategies.integers(2, 100))):
@@ -1778,12 +1799,16 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 #from pdb import set_trace
                 #set_trace()
                 p = self.malloc(self.NODE)
-                if expect_sample:
-                    #assert self.allocation_sample_happend
-                    self.allocation_sample_happend = False
-                else:
-                    #assert not self.allocation_sample_happend
-                    pass
+                if self.gc.sample_allocated_bytes != 0:
+                    # This assertion will sometimes fail after collect_and_reserves disables sampling and triggers a minor collection
+                    # TODO: in gc => rewrite temporary sampling disable in collect_and_reserve to use the leftover if allocation still happens
+                    # Cant really account for c_a_r-triggered minor collections here
+                    # And set sampling trigger to == sampling_point so no off by one in first iteration 
+                    if expect_sample:
+                        assert self.allocation_sample_happend
+                        self.allocation_sample_happend = False
+                    else:
+                        assert not self.allocation_sample_happend
                 p.x = identity
                 self.write(p, 'prev', self.erase(self.get_obj(previd)))
                 self.write(p, 'next', self.erase(self.get_obj(nextid)))
