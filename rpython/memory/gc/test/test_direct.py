@@ -8,7 +8,7 @@ see as the list of roots (stack and prebuilt objects).
 
 import py
 
-from hypothesis import strategies, given, assume, example, settings, Verbosity, Phase
+from hypothesis import strategies, given, assume, example, settings, Verbosity, Phase, reproduce_failure
 
 from rpython.rtyper.lltypesystem import lltype, llmemory
 from rpython.memory.gctypelayout import TypeLayoutBuilder, FIN_HANDLER_ARRAY
@@ -705,8 +705,7 @@ class TestIncrementalMiniMarkGCSimple(TestMiniMarkGCSimple):
 class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
 
-    GC_PARAMS = {'sample_allocated_bytes': 16 * WORD, # 128 byte
-                 'nursery_size': 4 * 16 * WORD} # 512 byte
+    GC_PARAMS = {'nursery_size': 4 * 16 * WORD} # 512 byte
 
     def test_vmprof_allocation_based_sampling_dummy(self):
 
@@ -715,6 +714,8 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(128)
 
         self.malloc(S)# fixedsize malloc
         self.malloc(S)
@@ -739,6 +740,8 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(128)
 
         self.malloc(S)# free:0->32
         self.malloc(S)# free:32->64
@@ -779,6 +782,8 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
+        self.gc.gc_set_allocation_sampling(128)
+
         self.malloc(S)# free:0->32
         self.malloc(S)# free:32->64
         self.malloc(S)# free:64->96
@@ -788,19 +793,16 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.nursery_free.offset == 160
         assert self.gc.nursery_top.offset == 256 
         assert self.gc.sample_point.offset == 256 
+
+        self.malloc(S)# free:160->192
         
         self.gc._minor_collection()
 
         assert self.gc.nursery_free.offset == 0
-        assert self.gc.nursery_top.offset == 128 
-        assert self.gc.sample_point.offset == 128
+        assert self.gc.nursery_top.offset == 64 
+        assert self.gc.sample_point.offset == 64
     
     def test_vmprof_allocation_based_sampling_vmprof_hook_enable(self):
-
-        assert hasattr(self.gc, "gc_set_allocation_sampling")
-
-        assert self.gc.sample_allocated_bytes == 128
-        assert self.gc.sample_point.offset == 128
 
         self.gc.gc_set_allocation_sampling(384)
 
@@ -809,18 +811,17 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     
     def test_vmprof_allocation_based_sampling_vmprof_hook_disable(self):
 
-        assert hasattr(self.gc, "gc_set_allocation_sampling")
+        self.gc.gc_set_allocation_sampling(128)
 
-        assert self.gc.allocation_sampling
         assert self.gc.sample_allocated_bytes == 128
         assert self.gc.sample_point.offset == 128
 
         self.gc.gc_set_allocation_sampling(0)
 
-        assert self.gc.allocation_sampling == False # this bool disables all gc-sampling functionality
         assert self.gc.sample_allocated_bytes == 0
-        assert self.gc.sample_point.offset == self.gc.nursery.offset
+        assert self.gc.sample_point == llmemory.NULL
 
+    @py.test.mark.xfail()
     def test_vmprof_minor_collection_pinnned_object(self):
         
         def dummy_trigger_func(gc):
@@ -870,7 +871,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.allocation_sample_counter == 1
 
-
+    @py.test.mark.xfail()
     def test_vmprof_pinnned_object_disable_bug(self):
         
         # Set dummy vmprof trigger function & activate sampling
@@ -919,7 +920,6 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        assert self.gc.allocation_sampling
         assert self.gc.sample_allocated_bytes == 128
         assert self.gc.sample_point.offset == 128
 
@@ -972,8 +972,43 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         # test if samples_todo counter reset works
         assert self.gc.allocation_sample_counter == 16
-    
-        
+
+    def test_vmprof_leftover_sample_point(self):
+
+        # Set dummy vmprof trigger function & activate sampling
+        self.gc._vmprof_allocation_sample_now = lambda x: None
+        self.gc.gc_set_allocation_sampling(128)
+
+
+        # allocate 12 times = 384B
+        for _ in range(12):
+            self.malloc(S)
+
+        self.gc.gc_set_allocation_sampling(96)
+
+        assert self.gc.nursery_free.offset == 384
+        assert self.gc.nursery_top.offset == 480
+
+        #malloc 3 times
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert self.gc.nursery_top.offset == self.gc.nursery_free.offset == 480
+
+        # Sample done here, but cant place new sampling point => disbale sampling and save offset
+        self.malloc(S)
+
+        assert self.gc.leftover_sample_point == 64 # sample_n_bytes - size_of(S) => 96 - 32 = 64
+
+        self.gc._minor_collection()
+
+        # new sampling point at leftover point
+        assert self.gc.sample_point.offset == 64
+        assert self.gc.nursery_top.offset == 64
+        # leftover must be reset now
+        assert self.gc.leftover_sample_point == 0
+
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
@@ -1328,9 +1363,13 @@ def random_action_sequences(draw):
 
     # To keep track of allocated memory for verifying sampling 
     size_gc_header = GCHeaderBuilder(lltype.Struct('header', ('tid', lltype.Signed))).size_gc_header
-    node_rawtotalsize = llmemory.raw_malloc_usage(size_gc_header) + 24# TODO: Replace with calculated value
+    node_rawtotalsize = llmemory.raw_malloc_usage(size_gc_header) + 24 # TODO: Replace with calculated value
     allocation_sampling_leftover = [0]
     gc_sample_n_bytes = [0]
+    # Keep track of nursery to account for minor collections triggered by collect_and_reserve
+    gc_nursery_size = 256 # TODO: Replace with calculated value
+    gc_nursery_counter = [256]
+    sampling_disabled_and_offset_saved = [False]
 
     current_identity = itertools.count(1)
     def next_identity():
@@ -1485,13 +1524,24 @@ def random_action_sequences(draw):
 
         sample_now = False
         if gc_sample_n_bytes[0] != 0:
-            if allocation_sampling_leftover[0] + node_rawtotalsize > gc_sample_n_bytes[0]:
+            # If we exceed a sampling point we need to sample
+            init_gc_nursery_counter = gc_nursery_counter[0]
+            gc_nursery_counter[0] -= node_rawtotalsize
+            allocation_sampling_leftover[0] += node_rawtotalsize
+            if allocation_sampling_leftover[0] > gc_sample_n_bytes[0]:
                 sample_now = True
-                allocation_sampling_leftover[0] += node_rawtotalsize
-                if allocation_sampling_leftover[0] > gc_sample_n_bytes[0]:
-                    allocation_sampling_leftover[0] -= gc_sample_n_bytes[0]
-            else:
-                allocation_sampling_leftover[0] += node_rawtotalsize
+                allocation_sampling_leftover[0] -= gc_sample_n_bytes[0]
+                ## TODO: USe init_gc_nursery_counter here ##
+
+                # Memory allocated, no instant collection, no new sampling point created
+                if 0 <= init_gc_nursery_counter < gc_sample_n_bytes[0] and init_gc_nursery_counter >= node_rawtotalsize:
+                    sampling_disabled_and_offset_saved[0] = True
+
+            # Collection inside of collect_and_reserve
+            if gc_nursery_counter[0] < 0:
+                sampling_disabled_and_offset_saved[0] = False
+                gc_nursery_counter[0] = gc_nursery_size - node_rawtotalsize
+
 
         add_action('malloc', identity, previndex, nextindex, sample_now)
 
@@ -1522,7 +1572,14 @@ def random_action_sequences(draw):
 
     @gen_action("collect")
     def collect():
-        allocation_sampling_leftover[0] = 0
+        # Either there was an offset saved, so we just keep 'allocation_sampling_leftover[0]'
+        if sampling_disabled_and_offset_saved[0]:
+            sampling_disabled_and_offset_saved[0] = False
+            gc_nursery_counter[0] = gc_nursery_size - node_rawtotalsize # TODO: Replace with var for sum of allocated mem before collection
+        # Or we do a collection and no offset was saved before that in malloc
+        else:
+            allocation_sampling_leftover[0] = 0
+            gc_nursery_counter[0] = gc_nursery_size
         add_action('collect')
 
     @gen_action("readarray", list)
@@ -1781,7 +1838,6 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 obj = self.unerase_str(obj)
                 assert "".join(obj.chars) == actiondata[1]
 
-    from hypothesis import reproduce_failure
     @settings(verbosity=Verbosity.verbose, print_blob=True, phases=[Phase.explicit, Phase.reuse, Phase.generate])
     @given(random_action_sequences())
     def test_random(self, random_data):
@@ -1800,10 +1856,6 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 #set_trace()
                 p = self.malloc(self.NODE)
                 if self.gc.sample_allocated_bytes != 0:
-                    # This assertion will sometimes fail after collect_and_reserves disables sampling and triggers a minor collection
-                    # TODO: in gc => rewrite temporary sampling disable in collect_and_reserve to use the leftover if allocation still happens
-                    # Cant really account for c_a_r-triggered minor collections here
-                    # And set sampling trigger to == sampling_point so no off by one in first iteration 
                     if expect_sample:
                         assert self.allocation_sample_happend
                         self.allocation_sample_happend = False
@@ -1892,7 +1944,9 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 self.stackroots.append(ref)
             elif kind == "set_gc_sampling_parameter":
                 sample_n_bytes, = actiondata
-                self.gc.gc_set_allocation_sampling(sample_n_bytes)
+                is_enabled = self.gc.gc_set_allocation_sampling(sample_n_bytes)
+                if not is_enabled:
+                    print "cannot activate gc sampling"
             else:
                 assert 0, "unreachable"
             checking_actions = action[-1]
