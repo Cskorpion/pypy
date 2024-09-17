@@ -69,9 +69,8 @@ class Arena(object):
         return address
 
     def getaddr(self, offset):
-        if not (0 <= offset <= self.nbytes):
-            raise ArenaError("Address offset is outside the arena")
-        return fakearenaaddress(self, offset)
+        valid = (0 <= offset <= self.nbytes)
+        return fakearenaaddress(self, offset, valid)
 
     def allocate_object(self, offset, size, letter='x'):
         self.check()
@@ -147,11 +146,14 @@ class Arena(object):
 
 class fakearenaaddress(llmemory.fakeaddress):
 
-    def __init__(self, arena, offset):
+    def __init__(self, arena, offset, in_range):
         self.arena = arena
         self.offset = offset
+        self.in_range = in_range
 
     def _getptr(self):
+        if not self.in_range:
+            raise ArenaError("Address offset is outside the arena")
         try:
             return self.arena.objectptrs[self.offset]
         except KeyError:
@@ -161,7 +163,10 @@ class fakearenaaddress(llmemory.fakeaddress):
     ptr = property(_getptr)
 
     def __repr__(self):
-        return '<arenaaddr %s + %d>' % (self.arena, self.offset)
+        out_of_range = ''
+        if not self.in_range:
+            out_of_range = " OUT OF ARENA"
+        return '<arenaaddr %s + %d%s>' % (self.arena, self.offset, out_of_range)
 
     def __add__(self, other):
         if is_valid_int(other):
@@ -199,6 +204,7 @@ class fakearenaaddress(llmemory.fakeaddress):
         other = other._fixup()
         if not other:
             return None, None
+        assert self.in_range
         obj = other.ptr._obj
         innerobject = False
         while not getattr(obj, '__arena_location__', (False,))[0]:

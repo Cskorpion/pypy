@@ -951,13 +951,11 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        assert self.gc.allocation_sampling
         assert self.gc.sample_allocated_bytes == 32
         assert self.gc.sample_point.offset == 32
 
 
         self.malloc(S)
-        # One Sample after every 4 mallocs 
         for i in range(15):
             self.malloc(S)
         
@@ -970,7 +968,6 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         self.malloc(STR, 2)# plus one to trigger 2nd sample
         assert self.gc.nursery_free.offset == 32
 
-        # test if samples_todo counter reset works
         assert self.gc.allocation_sample_counter == 16
 
     def test_vmprof_leftover_sample_point(self):
@@ -996,18 +993,15 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.nursery_top.offset == self.gc.nursery_free.offset == 480
 
-        # Sample done here, but cant place new sampling point => disbale sampling and save offset
+        # sample done, but next sampling point is outside nursery
         self.malloc(S)
-
-        assert self.gc.leftover_sample_point == 64 # sample_n_bytes - size_of(S) => 96 - 32 = 64
+        assert self.gc.sample_point > self.gc.nursery_top
 
         self.gc._minor_collection()
 
         # new sampling point at leftover point
         assert self.gc.sample_point.offset == 64
         assert self.gc.nursery_top.offset == 64
-        # leftover must be reset now
-        assert self.gc.leftover_sample_point == 0
 
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):

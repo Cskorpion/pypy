@@ -1,4 +1,4 @@
-import py, os
+import py, pytest, os
 
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi, llarena
 from rpython.rtyper.lltypesystem.llarena import (arena_malloc, arena_reset,
@@ -69,6 +69,28 @@ def test_arena():
     assert cast_adr_to_ptr((a + ssize + 1) - 1, S2PTR).y == 'X'
 
     assert (a + 4) - (a + 1) == 3
+
+def test_arena_arithmetic_outside_range():
+    a = arena_malloc(1024, False)
+    a1 = a + 32
+    assert a1.arena == a.arena
+    assert a1.offset == 32
+    assert a1.in_range
+    S = lltype.Struct('S', ('x', lltype.Signed))
+    SPTR = lltype.Ptr(S)
+    ssize = llmemory.raw_malloc_usage(llmemory.sizeof(S))
+    arena_reserve(a1, llmemory.sizeof(S))
+    a1.ptr.x = 12
+    assert a1.ptr.x == 12
+
+    a2 = a + 4048
+    assert a2.arena == a.arena
+    assert a2.offset == 4048
+    assert not a2.in_range
+    assert a2 - a1 == 4048 - 32
+
+    with pytest.raises(ArenaError):
+        a2.ptr # it's allowed to create such an address, but not to access it
 
 
 def lt(x, y):

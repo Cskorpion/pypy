@@ -989,9 +989,10 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
             else:
                 minor_collection_count += 1
-                if self.allocation_sampling:
-                    reset_in_sampling_loop = True
                 if minor_collection_count == 1:
+                    # set nursery_free to the previous value for the sampling
+                    # logic in _minor_collection, not so nice
+                    self.nursery_free = last_nursery_free - totalsize
                     self.minor_collection_with_major_progress()
                 else:
                     # Nursery too full again.  This is likely because of
@@ -1853,6 +1854,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.sample_point != llmemory.NULL:
             #if self.sample_point > self.nursery_top:
             self.sample_point -= self.nursery_free - self.nursery
+        self.nursery_free = llmemory.NULL      # debug: don't use me
         
         #
         # All nursery barriers are invalid from this point on.  They
