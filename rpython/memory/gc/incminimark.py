@@ -918,6 +918,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
         minor_collection_count = 0
 
+        collection_occured = False
+
         while True:
             last_nursery_free = self.nursery_free # for returning after sampling
             # Idea: subtract totalsize here, so we can always work with the 'true' nursery_free here
@@ -937,7 +939,10 @@ class IncrementalMiniMarkGC(MovingGCBase):
                     self._vmprof_allocation_sample_now(self)
 
                     self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
-                    if self.sample_point >= last_nursery_free:
+                    if collection_occured:
+                        if self.sample_point >= self._bump_pointer(last_nursery_free, totalsize):
+                            break
+                    elif self.sample_point >= last_nursery_free:
                         break
                     
 
@@ -946,11 +951,16 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 else:
                     self.nursery_top = self.sample_point
                 
-                new_free = last_nursery_free
+
+                if collection_occured:
+                    # After Collection nursery_free and last_nursery_free dont have totalsize added
+                    new_free = self._bump_pointer(last_nursery_free, totalsize) 
+                else:    
+                    new_free = last_nursery_free
+
                 if new_free <= self.nursery_top:
                     self.nursery_free = new_free
-                    # last nursery free is former nursery_free + totalsize 
-                    result = last_nursery_free - totalsize
+                    result = new_free - totalsize
                     break
                 
 
@@ -988,6 +998,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 self.nursery_top = self.nursery_barriers.popleft()
 
             else:
+                collection_occured = True
                 minor_collection_count += 1
                 if minor_collection_count == 1:
                     # set nursery_free to the previous value for the sampling
@@ -1852,8 +1863,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
         start = time.time()
         debug_start("gc-minor")
         if self.sample_point != llmemory.NULL:
-            #if self.sample_point > self.nursery_top:
             self.sample_point -= self.nursery_free - self.nursery
+            # TODO: Is it ok if sample_point is < nursery ?
         self.nursery_free = llmemory.NULL      # debug: don't use me
         
         #
