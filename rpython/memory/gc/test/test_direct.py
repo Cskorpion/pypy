@@ -1043,10 +1043,60 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.allocation_sample_counter == 1
     
-    #def test_vmprof_invalid_pointer_bug_after_collect_and_reserve(self):
-        # TODO:
-        # when allocating in collect_and_reserve the pointer to be returned must be substracted the obj size,
-        # IFF. we did NOT do a collection, we must NOT substract the size
+    def test_vmprof_invalid_pointer_bug_after_collect_and_reserve(self):
+        # when allocating in collect_and_reserve, the pointer to be returned must be substracted the obj size,
+        # IFF. we DID do a collection, we must NOT substract the size.
+
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(16)
+        
+        # Allocate 16 times = 512B
+        for _ in range(16):
+            self.malloc(S)
+
+        assert self.gc.nursery_top.offset == 512
+
+        # This malloc triggers a collection in collect_and_reserve
+        p = self.malloc(S) # this fails at an assert if a post-collection nursery_free is substracted the obj size in collect_and_reserve
+
+        p.x = 117 # this should then fail aswell
+
+
+    def test_vmprof_external_malloc_sampling(self):
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        sample_allocated_bytes = 768
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        type_id = self.get_type_id(VAR)
+        size = self.gc.nonlarge_max + 1 # 64
+
+        self.gc.external_malloc(type_id, size, alloc_young=True) # size of reserved obj = 16 + 8 * 64 = 528
+
+        assert self.gc.nursery_top.offset == 240 # 768 - 528
+        assert self.gc.sample_point.offset == self.gc.nursery_top.offset
+        assert not hasattr(self.gc, "allocation_sample_counter")
+
+        self.gc.external_malloc(type_id, size, alloc_young=True)
+
+        assert self.gc.nursery_top.offset == 240
+        assert self.gc.sample_point.offset == 240 + 768
+        assert self.gc.allocation_sample_counter == 1
+
 
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):

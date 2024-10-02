@@ -1179,6 +1179,25 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.is_varsize(typeid):
             offset_to_length = self.varsize_offset_to_length(typeid)
             (result + size_gc_header + offset_to_length).signed[0] = length
+        #
+        # Allocation based sampling with VMProf
+        if self.sample_point != llmemory.NULL:
+            size_to_sample = raw_malloc_usage(totalsize)
+            
+            samples = 0
+            # Sample while exceed the sample point
+            while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
+                samples += 1
+                self._vmprof_allocation_sample_now(self)
+                self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
+
+            # part of size_to_sample that was not sampled
+            non_sampled = size_to_sample - self.sample_allocated_bytes * samples
+            # adjust next sampling point with non sampled leftover
+            self.sample_point -= non_sampled if non_sampled > 0 else 0
+            # set nursery top to sample point if it fits into the nursery
+            self._set_nursery_top_for_sampling()
+            
         return result + size_gc_header
 
 
