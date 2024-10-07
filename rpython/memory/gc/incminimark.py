@@ -756,7 +756,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
             toobig = r_uint(maxsize // raw_malloc_usage(itemsize)) + 1
         else:
             toobig = r_uint(sys.maxint) + 1
-
         if r_uint(length) >= r_uint(toobig):
             #
             # If the total size of the object would be larger than
@@ -1184,6 +1183,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.sample_point != llmemory.NULL:
             size_to_sample = raw_malloc_usage(totalsize)
             
+            init_nursery_space = self.sample_point - self.nursery_free 
             samples = 0
             # Sample while exceed the sample point
             while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
@@ -1191,13 +1191,16 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 self._vmprof_allocation_sample_now(self)
                 self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
 
-            # part of size_to_sample that was not sampled
-            non_sampled = size_to_sample - self.sample_allocated_bytes * samples
-            # adjust next sampling point with non sampled leftover
-            self.sample_point -= non_sampled if non_sampled > 0 else 0
+            if samples == 0:
+                # We did not sample => free + size_to_sample < sample_point => move sampling point closer to nursery free by susbtracting obj_size
+                self.sample_point -= size_to_sample
+            else:
+                # next sample point at: sample_allocated_bytes - (obj size - (initial space before sample in nursery + sample_allocated_bytes * number of 'full' samples)) 
+                next_sample_point_offset = size_to_sample - (init_nursery_space + (samples - 1) * self.sample_allocated_bytes)
+                self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes - next_sample_point_offset)
+
             # set nursery top to sample point if it fits into the nursery
             self._set_nursery_top_for_sampling()
-            
         return result + size_gc_header
 
 

@@ -1094,7 +1094,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         self.gc.external_malloc(type_id, size, alloc_young=True)
 
         assert self.gc.nursery_top.offset == 240
-        assert self.gc.sample_point.offset == 240 + 768
+        assert self.gc.sample_point.offset == 768 - 288# Sampling rate - (obj size - sampling leftover)
         assert self.gc.allocation_sample_counter == 1
 
 
@@ -1453,6 +1453,9 @@ def random_action_sequences(draw):
     # To keep track of allocated memory for verifying sampling 
     size_gc_header = GCHeaderBuilder(lltype.Struct('header', ('tid', lltype.Signed))).size_gc_header
     node_rawtotalsize = llmemory.raw_malloc_usage(size_gc_header) + 24 # TODO: Replace with calculated value
+    array_header_size = llmemory.raw_malloc_usage(size_gc_header) + 8 # fixed size # TODO: Replace with calculated value
+    string_header_size = llmemory.raw_malloc_usage(size_gc_header) + 17 # var size # TODO: Replace with calculated value
+    weakref_size = llmemory.raw_malloc_usage(size_gc_header) + 8 # fixed size # TODO: Replace with calculated value
     allocation_sampling_counter = [0]
     gc_sample_n_bytes = [0]
 
@@ -1689,17 +1692,50 @@ def random_action_sequences(draw):
             array2[dest_start + i] = array1[source_start + i]
         add_action('copy_array', array1index, array2index, source_start, dest_start, length)
 
-    #@gen_action("malloc_array")
+    @gen_action("malloc_array")
     def malloc_array():
         identity, indexes = create_array()
         stackroots.append(identity)
-        add_action('malloc_array', indexes)
 
-    #@gen_action("malloc_string")
+        array_memory_usage = array_header_size + WORD * len(indexes)
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += array_memory_usage
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                # Arrays can be multiple times larger then sample_n_bytes
+                while allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                    allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+        add_action('malloc_array', indexes, sample_now)
+
+    @gen_action("malloc_string")
     def malloc_string():
         identity, value = create_string()
         stackroots.append(identity)
-        add_action('malloc_string', value)
+
+        # round up (25 b header  + len * size_1b) 
+        string_memory_usage = string_header_size + 1 * len(value) 
+        # Rounding up
+        if string_memory_usage % 8 != 0:
+            string_memory_usage += 8 - string_memory_usage % 8
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += string_memory_usage
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                # Strings can be multiple times larger then sample_n_bytes
+                while allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                    allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+        # TODO: Remove, when i am certain, that string size calculation is correct
+        assert string_memory_usage % 8 == 0
+
+        add_action('malloc_string', value, sample_now)
 
     #@gen_action("pin", str)
     def pin():
@@ -1724,7 +1760,7 @@ def random_action_sequences(draw):
             ids_taken[identity] = len(ids_taken)
             add_action('take_id', index, -1)
 
-    #@gen_action("create_weakref", lambda: len(filter_objects((Node, list))) != 0)
+    @gen_action("create_weakref", lambda: len(filter_objects((Node, list))) != 0)
     def create_weakref():
         indexes = filter_objects((Node, list))
         index = draw(strategies.sampled_from(indexes))
@@ -1733,7 +1769,18 @@ def random_action_sequences(draw):
         ref = Weakref(identity)
         model[new_identity] = ref
         stackroots.append(new_identity)
-        add_action("create_weakref", index)
+
+        # Weakref: 16B fixed ?
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += weakref_size
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+
+        add_action("create_weakref", index, sample_now)
     
     @gen_action("set_gc_sampling_parameter")
     def set_gc_sampling_parameter():
@@ -1917,17 +1964,10 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 del self.stackroots[index]
             elif kind == "malloc": # alloc
                 identity, previd, nextid, expect_sample = actiondata
-                #from pdb import set_trace
-                #set_trace()
                 p = self.malloc(self.NODE)
                 if sampling_active[0]:
                     assert self.allocation_sample_happend == expect_sample
                     self.allocation_sample_happend = False
-                    #if expect_sample:
-                    #    assert self.allocation_sample_happend
-                    #    self.allocation_sample_happend = False
-                    #else:
-                    #    assert not self.allocation_sample_happend
                 p.x = identity
                 self.write(p, 'prev', self.erase(self.get_obj(previd)))
                 self.write(p, 'next', self.erase(self.get_obj(nextid)))
@@ -1970,13 +2010,21 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                     dest_start += 1
                     source_start += 1
             elif kind == "malloc_array":
-                content, = actiondata
+                content, expect_sample = actiondata
                 array = self.create_array(content)
                 self.stackroots.append(array)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
+         
             elif kind == "malloc_string":
-                content, = actiondata
+                content, expect_sample = actiondata
                 array = self.create_string(content)
                 self.stackroots.append(array)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
+
             elif kind == "pin":
                 index, = actiondata
                 ptr = self.stackroots[index]
@@ -2003,8 +2051,11 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 else:
                     assert self.computed_ids[compare_with] == int_id
             elif kind == "create_weakref":
-                index, = actiondata
+                index, expect_sample = actiondata
                 ref = self.malloc(WEAKREF)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
                 # must read node *after* malloc, in case malloc collects and moves
                 node = self.get_obj(index)
                 ref.weakptr = llmemory.cast_ptr_to_adr(node)
