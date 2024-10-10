@@ -1183,21 +1183,13 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.sample_point != llmemory.NULL:
             size_to_sample = raw_malloc_usage(totalsize)
             
-            init_nursery_space = self.sample_point - self.nursery_free 
-            samples = 0
-            # Sample while exceed the sample point
+            # Sample while exceeding the sample point
             while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
-                samples += 1
                 self._vmprof_allocation_sample_now(self)
                 self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
-
-            if samples == 0:
-                # We did not sample => free + size_to_sample < sample_point => move sampling point closer to nursery free by susbtracting obj_size
-                self.sample_point -= size_to_sample
-            else:
-                # next sample point at: sample_allocated_bytes - (obj size - (initial space before sample in nursery + sample_allocated_bytes * number of 'full' samples)) 
-                next_sample_point_offset = size_to_sample - (init_nursery_space + (samples - 1) * self.sample_allocated_bytes)
-                self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes - next_sample_point_offset)
+            
+            # Substract obj size from sample point to account for non-sampled leftover
+            self.sample_point -= size_to_sample
 
             # set nursery top to sample point if it fits into the nursery
             self._set_nursery_top_for_sampling()
