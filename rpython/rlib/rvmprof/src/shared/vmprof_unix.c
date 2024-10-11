@@ -90,7 +90,6 @@ void segfault_handler(int arg)
 #ifdef RPYTHON_VMPROF
 int vmprof_sample_stack_now_gc_triggered(void) {
     /* This function will be called from PyPy's GC */
-    //printf("gc sample triggered \n");
 
     int fd = vmp_profile_fileno();
     assert(fd >= 0);
@@ -99,8 +98,10 @@ int vmprof_sample_stack_now_gc_triggered(void) {
     ucontext_t uc;
 
     if (p == NULL) {
+        printf("vmprof couldn't get free Bufffer \n");
         return -1; // Couldn't get free Bufffer 
     } else if (getcontext(&uc) == -1) {
+        printf("vmprof couldn't get user context \n");
         return -2; // Couldn't get user context
     }
 
@@ -116,11 +117,6 @@ int vmprof_sample_stack_now_gc_triggered(void) {
     return 1;
 }
 #endif
-
-int vmprof_say_hi(void) {
-    printf("vmprof says hi from vmprof_unix.c \n");
-    return 0;
-}
 
 int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type)
 {
@@ -539,5 +535,13 @@ int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, i
 #endif
         return 0;
     }
-    return vmp_walk_and_record_stack(frame, result, max_depth, 1, pc);
+    // When sampling via PyPy's GC, we dont have signals and especially no signal frames.
+    // VMProf walks over the signal frames (in vmp_walk_and_record_stack) and records the remaining stack
+    // So if there are no signal frames, vmprof just walks the entire stack looking for signal frames
+    // And then returns without sampling
+    int signal = 1;
+    if (vmprof_get_profile_interval_usec() == 0) {// TODO: Maybe use int to tell if we do gc-sampling
+        signal = 0;
+    }
+    return vmp_walk_and_record_stack(frame, result, max_depth, signal, pc);
 }

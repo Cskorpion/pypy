@@ -35,16 +35,12 @@ def get_unique_id(code):
 def enable(fileno, interval, memory=0, native=0, real_time=0):
     _get_vmprof().enable(fileno, interval, memory, native, real_time)
 
-def enable_allocation_triggered(fileno, sample_n_bytes=1024):
-    _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes)
-
+def enable_allocation_triggered(fileno, sample_n_bytes=1024, native=0):
+    _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes, native)
 
 # For testing
 def sample_stack_now():
     _get_vmprof().sample_stack_now()
-
-def vmprof_say_hi():
-    _get_vmprof().vmprof_say_hi()
 
 def disable():
     _get_vmprof().disable()

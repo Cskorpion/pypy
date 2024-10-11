@@ -129,9 +129,6 @@ def setup():
                                                            save_err=rffi.RFFI_SAVE_ERRNO,
                                                            releasegil=False)
 
-    vmprof_say_hi = rffi.llexternal("vmprof_say_hi", [], rffi.INT,
-                                     compilation_info=eci,
-                                     save_err=rffi.RFFI_SAVE_ERRNO)
     vmprof_disable = rffi.llexternal("vmprof_disable", [], rffi.INT,
                                      compilation_info=eci,
                                      save_err=rffi.RFFI_SAVE_ERRNO)

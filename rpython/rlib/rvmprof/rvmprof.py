@@ -35,7 +35,7 @@ class FakeWeakCodeObjectList(object):
         pass
     def get_all_handles(self):
         return []
-    
+@jit.dont_look_inside
 def gc_set_allocation_sampling(sample_n_bytes=1024):
     if not llop.gc_set_allocation_sampling(lltype.Bool, sample_n_bytes):
         raise VMProfError("GC activation function not initialized")
@@ -164,7 +164,7 @@ class VMProf(object):
         self.is_enabled = True
     
     @jit.dont_look_inside
-    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024):
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, native=0):
         """Enable vmprof.  Writes go to the given 'fileno'.
         No sampling intervall, vmprof gets triggered from the gc.
         Raises VMProfError if something goes wrong.
@@ -173,12 +173,12 @@ class VMProf(object):
         if self.is_enabled:
             raise VMProfError("vmprof is already enabled")
 
-        p_error = self.cintf.vmprof_init(fileno, 0, 0, 0, "pypy", 0, 0)
+        p_error = self.cintf.vmprof_init(fileno, 0, 0, 0, "pypy", native, 0)
         if p_error:
             raise VMProfError(rffi.charp2str(p_error))
 
         self._gather_all_code_objs()
-        res = self.cintf.vmprof_enable(0, 0, 0)
+        res = self.cintf.vmprof_enable(0, native, 0)
 
         self.sample_n_bytes = sample_n_bytes
 
@@ -188,16 +188,11 @@ class VMProf(object):
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
-        #os.write(2, "vmprof allocation sampling activated in rvmprof.py \n") 
 
     @jit.dont_look_inside
     @rgc.no_collect
     def sample_stack_now(self):
         self.cintf.vmprof_sample_stack_now_gc_triggered()
-    
-    #@jit.dont_look_inside
-    def vmprof_say_hi(self):
-        self.cintf.vmprof_say_hi()
 
     @jit.dont_look_inside
     def disable(self):

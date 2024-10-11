@@ -32,7 +32,6 @@
 RPY_EXTERN void vmprof_ignore_signals(int ignored);
 RPY_EXTERN long vmprof_enter_signal(void);
 RPY_EXTERN long vmprof_exit_signal(void);
-RPY_EXTERN int vmprof_say_hi(void);
 /* *************************************************************
  * functions to dump the stack trace
  * *************************************************************
