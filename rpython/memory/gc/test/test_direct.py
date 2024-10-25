@@ -803,6 +803,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.sample_point.offset == 64
     
     def test_vmprof_allocation_based_sampling_vmprof_hook_enable(self):
+        """ Test if sampling can be enabled """
 
         self.gc.gc_set_allocation_sampling(384)
 
@@ -810,6 +811,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.sample_point.offset == 384
     
     def test_vmprof_allocation_based_sampling_vmprof_hook_disable(self):
+        """ Test if sampling can be enabled and then be disabled again """
 
         self.gc.gc_set_allocation_sampling(128)
 
@@ -820,9 +822,9 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.sample_allocated_bytes == 0
         assert self.gc.sample_point == llmemory.NULL
-
-    @py.test.mark.xfail()
-    def test_vmprof_minor_collection_pinnned_object(self):
+      
+    def test_vmprof_pinnned_object_after_minor(self):
+        """ Test if _minor_collection does not enable sampling if there are pinned objs """
         
         def dummy_trigger_func(gc):
             if "allocation_sample_counter" not in gc.__dict__.keys():
@@ -830,80 +832,82 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
         
-        # Set dummy vmprof trigger function & activate sampling
+        # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
-        self.gc.gc_set_allocation_sampling(64)
-
-
-        # allocate 3 times, one of the allocations pinned
-        self.malloc(S)
 
         s = self.malloc(STR, 1)
         # s shall not be collected
         self.stackroots.append(s)
-
-        self.malloc(S)
-
-
         pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))# pinned obj at 32
         assert pinned
 
-        assert self.gc.nursery_top.offset == 128
+        self.gc.gc_set_allocation_sampling(64)
+
+        assert self.gc.sample_point == llmemory.NULL # sampling should be 'paused' due to pinned obj in nursery
 
         self.gc.collect()
 
-        assert self.gc.nursery_free.offset == 0
-        assert self.gc.nursery_top.offset == 32 # top should be 32 because of pinned obj
-        assert self.gc.sample_point.offset == 0 # sample point should be 0 else we'd sample to early
+        assert self.gc.sample_point == llmemory.NULL # sampling should still be 'paused' due to pinned obj not collected
 
 
-        self.malloc(S)
-        assert self.gc.nursery_free.offset == 32
-        assert self.gc.sample_point.offset == 0
-        assert self.gc.nursery_top.offset == self.gc.real_nursery_top.offset == 32
+    def test_vmprof_disable_sampling_allow_pinning(self):
+        """ Test that pinning is 'turned back on' after sampling is disabled """
 
-        # now a pinned obj is at nursery_top => jump over it
-        # but no sample done here because top == real_top
+        assert self.gc.max_number_of_pinned_objects == 4
 
-        self.malloc(S)
-        assert self.gc.nursery_free.offset == 96
-        assert self.gc.sample_point.offset == 128 # the new sampling point is set BEFORE the allocation is done so free is at 64 after jump
+        self.gc.gc_set_allocation_sampling(384)
 
-        assert self.gc.allocation_sample_counter == 1
-
-    @py.test.mark.xfail()
-    def test_vmprof_pinnned_object_disable_bug(self):
-        
-        # Set dummy vmprof trigger function & activate sampling
-        self.gc._vmprof_allocation_sample_now = lambda x: None
-        self.gc.gc_set_allocation_sampling(128)
-
-
-        # allocate 3 times, one of the allocations pinned
-        self.malloc(S)
-        self.malloc(S)
-
-        s = self.malloc(STR, 1)
-        self.stackroots.append(s)
-
-        pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))# pinned obj at 64
-        assert pinned
-
-        assert self.gc.nursery_top.offset == 128
-
-        self.gc.collect()
-
-        assert self.gc.nursery_free.offset == 0
-        assert self.gc.nursery_top.offset == 64 # top should be 64 because of pinned obj
-        assert self.gc.real_nursery_top.offset == 64 # that is also the real nursery top 
+        assert self.gc.max_number_of_pinned_objects == 0
+        assert self.gc.initial_max_number_of_pinned_objects == 4
 
         self.gc.gc_set_allocation_sampling(0)
 
-        assert self.gc.nursery_free.offset == 0
-        assert self.gc.sample_point.offset == 0
-        # There was a bug, where the nursery top would be set to nursery_start + nursery_size after disable 
-        assert self.gc.nursery_top.offset == 64
-        assert self.gc.real_nursery_top.offset == 64
+        assert self.gc.max_number_of_pinned_objects == 4
+
+    def test_vmprof_pinnned_object_waiting(self):
+        """ Test if the gc waits for the pinned obj to be gone before sampling """
+
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+            
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        # First, pin an object
+        s = self.malloc(STR, 1)
+        pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))
+        assert pinned
+        assert self.gc.pinned_objects_in_nursery == 1
+
+        self.gc.gc_set_allocation_sampling(64)
+
+        assert self.gc.max_number_of_pinned_objects == 0
+        assert self.gc.sample_allocated_bytes == 64 # assert that sampling is enabled but 'paused'
+        assert self.gc.sample_point == llmemory.NULL # assert that sampling is enabled but 'paused'
+
+        # allocate 3 times, the last malloc should NOT trigger a sample, as there is a pinned obj in the nursery
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert not hasattr(self.gc, "allocation_sample_counter")
+
+        self.gc.unpin(llmemory.cast_ptr_to_adr(s)) # unpin the object
+        assert self.gc.pinned_objects_in_nursery == 0
+
+        self.gc.collect() # this collection clears the nursery and should enable sampling as there are no more pinned objs now
+
+        assert self.gc.sample_point.offset == 64 # assert that sampling is activated now
+
+        # allocate 3 times, the last malloc should trigger a sample, as there are no pinned objs in the nursery
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert self.gc.allocation_sample_counter == 1
 
 
     def test_vmprof_allocation_based_sampling_many_samples(self):
