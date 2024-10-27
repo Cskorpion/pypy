@@ -1092,15 +1092,39 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         self.gc.external_malloc(type_id, size, alloc_young=True) # size of reserved obj = 16 + 8 * 64 = 528
 
         assert self.gc.nursery_top.offset == 240 # 768 - 528
-        assert self.gc.sample_point.offset == self.gc.nursery_top.offset
+        assert self.gc.sample_point.offset == 240
         assert not hasattr(self.gc, "allocation_sample_counter")
 
         self.gc.external_malloc(type_id, size, alloc_young=True)
 
-        assert self.gc.nursery_top.offset == 240
-        assert self.gc.sample_point.offset == 768 - 288# Sampling rate - (obj size - sampling leftover)
+        assert self.gc.nursery_top.offset == 240 + 768 - 528 # last sample_point + sample_allocated_bytes - obj_size
+        assert self.gc.sample_point.offset == 240 + 768 - 528 
         assert self.gc.allocation_sample_counter == 1
 
+    
+    def test_vmprof_external_malloc_wrong_nursery_top_bug(self):
+        """ Test if real_nursery_top is remained correctly by external_malloc """
+        assert self.gc.real_nursery_top.offset == 512
+        
+      # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(256)
+
+        type_id = self.get_type_id(VAR)
+        size = self.gc.nonlarge_max + 1 # 64
+
+        self.gc.external_malloc(type_id, size, alloc_young=True) # size of reserved obj = 16 + 8 * 64 = 528
+
+        assert self.gc.nursery_top.offset == 240 # 768 - 528
+        assert self.gc.sample_point.offset == 240
+        assert self.gc.real_nursery_top.offset == 512 # this cannot change
+        assert self.gc.allocation_sample_counter == 2
 
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):

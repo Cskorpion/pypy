@@ -1191,7 +1191,9 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.sample_point -= size_to_sample
 
             # set nursery top to sample point if it fits into the nursery
-            self._set_nursery_top_for_sampling()
+            #self._set_nursery_top_for_sampling()
+            if self.sample_point <= self.real_nursery_top:
+                self.nursery_top = self.sample_point # set nursery to sampling point
         return result + size_gc_header
 
 
