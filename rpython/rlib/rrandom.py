@@ -4,7 +4,7 @@
 
 # this is stolen from CPython's _randommodule.c
 
-from rpython.rlib.rarithmetic import r_uint, intmask
+from rpython.rlib.rarithmetic import r_uint, intmask, r_uint32, r_uint64
 
 N = 624
 M = 397
@@ -122,3 +122,64 @@ class Random(object):
         else:
             mt[0] = r_uint(0x80000000)
         self.index = N
+
+class Pcg32nogcRandom(object):
+    """ https://www.pcg-random.org/download.html 
+        Licensed under Apache License 2.0 (NO WARRANTY, etc. see website)
+        * Really* minimal PCG32 code / (c) 2014 M.E. O'Neill / pcg-random.org """
+    
+    _alloc_flavor_ = 'raw'
+
+    def __init__(self):
+        self.state = r_uint64(0x853c49e6748fea9b)
+        self.inc = r_uint64(0xda3e39cb94b95bdb)
+
+    def seed_from_time(self):
+        import time
+        self.state = r_uint64(time.time() * 1000)
+
+    def randbelow(self, bound):
+
+        assert bound > 0, "bound must be positive"
+
+        bound = r_uint32(bound)
+
+        # To avoid bias, we need to make the range of the RNG a multiple of
+        # bound, which we do by dropping output less than a threshold.
+        # A naive scheme to calculate the threshold would be to do
+        #
+        #     uint32_t threshold = 0x100000000ull % bound;
+        #
+        # but 64-bit div/mod is slower than 32-bit div/mod (especially on
+        # 32-bit platforms).  In essence, we do
+        #
+        #     uint32_t threshold = (0x100000000ull-bound) % bound;
+        #
+        # because this version will calculate the same modulus, but the LHS
+        # value is less than 2^32.
+
+
+        threshold = -bound % bound
+    
+        # Uniformity guarantees that this loop will terminate.  In practice, it
+        # should usually terminate quickly; on average (assuming all bounds are
+        # equally likely), 82.25% of the time, we can expect it to require just
+        # one iteration.  In the worst case, someone passes a bound of 2^31 + 1
+        # (i.e., 2147483649), which invalidates almost 50% of the range.  In 
+        # practice, bounds are typically small and only a tiny amount of the range
+        # is eliminated.
+
+        while True:
+            r = self.genrand32()
+            if r >= threshold:
+                return r % bound
+        
+
+    def genrand32(self):
+        oldstate = self.state
+        # Advance internal state
+        self.state = oldstate * r_uint64(6364136223846793005) + (self.inc | 1)
+        # Calculate output function (XSH RR), uses old state for max ILP
+        xorshifted = r_uint32(((oldstate >> 18) ^ oldstate) >> 27)
+        rot = oldstate >> 59
+        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31))

@@ -712,10 +712,12 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         def dummy_trigger_func(gc):
             gc.allocation_sample_dummy = True
 
+        sample_allocated_bytes = 128
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
 
-        self.gc.gc_set_allocation_sampling(128)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         self.malloc(S)# fixedsize malloc
         self.malloc(S)
@@ -738,8 +740,11 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
 
+        sample_allocated_bytes = 128
+
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
 
         self.gc.gc_set_allocation_sampling(128)
 
@@ -774,15 +779,18 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.nursery_top.offset == 384
         
     
-    def test_vmprof_allocation_based_sampling_dummy_minor_collection(self):
+    def test_vmprof_allocation_based_sampling_minor_collection(self):
 
         def dummy_trigger_func(gc):
             pass
 
+        sample_allocated_bytes = 128
+
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
 
-        self.gc.gc_set_allocation_sampling(128)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         self.malloc(S)# free:0->32
         self.malloc(S)# free:32->64
@@ -805,7 +813,9 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     def test_vmprof_allocation_based_sampling_vmprof_hook_enable(self):
         """ Test if sampling can be enabled """
 
-        self.gc.gc_set_allocation_sampling(384)
+        sample_allocated_bytes = 384
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.sample_allocated_bytes == 384
         assert self.gc.sample_point.offset == 384
@@ -813,7 +823,9 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     def test_vmprof_allocation_based_sampling_vmprof_hook_disable(self):
         """ Test if sampling can be enabled and then be disabled again """
 
-        self.gc.gc_set_allocation_sampling(128)
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.sample_allocated_bytes == 128
         assert self.gc.sample_point.offset == 128
@@ -832,6 +844,8 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
         
+        sample_allocated_bytes = 64
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
@@ -841,7 +855,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))# pinned obj at 32
         assert pinned
 
-        self.gc.gc_set_allocation_sampling(64)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.sample_point == llmemory.NULL # sampling should be 'paused' due to pinned obj in nursery
 
@@ -853,13 +867,17 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     def test_vmprof_disable_sampling_allow_pinning(self):
         """ Test that pinning is 'turned back on' after sampling is disabled """
 
+        sample_allocated_bytes = 384
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        
         assert self.gc.max_number_of_pinned_objects == 4
 
-        self.gc.gc_set_allocation_sampling(384)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.max_number_of_pinned_objects == 0
         assert self.gc.initial_max_number_of_pinned_objects == 4
 
+        self.gc._get_first_sample_offset = lambda: 0
         self.gc.gc_set_allocation_sampling(0)
 
         assert self.gc.max_number_of_pinned_objects == 4
@@ -873,8 +891,11 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
             
+        sample_allocated_bytes = 64
+
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
 
         # First, pin an object
         s = self.malloc(STR, 1)
@@ -882,10 +903,10 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert pinned
         assert self.gc.pinned_objects_in_nursery == 1
 
-        self.gc.gc_set_allocation_sampling(64)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.max_number_of_pinned_objects == 0
-        assert self.gc.sample_allocated_bytes == 64 # assert that sampling is enabled but 'paused'
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes # assert that sampling is enabled but 'paused'
         assert self.gc.sample_point == llmemory.NULL # assert that sampling is enabled but 'paused'
 
         # allocate 3 times, the last malloc should NOT trigger a sample, as there is a pinned obj in the nursery
@@ -918,13 +939,15 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
 
-        self.gc.gc_set_allocation_sampling(128)
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
 
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes
         assert self.gc.sample_point.offset == 128
 
 
@@ -937,7 +960,6 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.allocation_sample_counter == 64
 
 
-    
     def test_vmprof_allocation_based_sampling_big_object(self):
 
         # TODO: replace the last malloc with large obj allocation and set assert 
@@ -949,13 +971,16 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
             else:
                 gc.allocation_sample_counter += 1
 
-        self.gc.gc_set_allocation_sampling(32)
+        sample_allocated_bytes = 32
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
 
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        assert self.gc.sample_allocated_bytes == 32
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes
         assert self.gc.sample_point.offset == 32
 
 
@@ -977,14 +1002,18 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
     def test_vmprof_leftover_sample_point(self):
 
         # Set dummy vmprof trigger function & activate sampling
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         self.gc._vmprof_allocation_sample_now = lambda x: None
-        self.gc.gc_set_allocation_sampling(128)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
 
         # Allocate 12 times = 384B
         for _ in range(12):
             self.malloc(S)
 
+        sample_allocated_bytes = 96
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         self.gc.gc_set_allocation_sampling(96)
 
         assert self.gc.nursery_free.offset == 384
@@ -1014,9 +1043,12 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
                 gc.allocation_sample_counter = 1
             else:
                 gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 768
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        self.gc.gc_set_allocation_sampling(768)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         assert self.gc.sample_point.offset == 768
         assert self.gc.nursery_top.offset == 512
@@ -1057,9 +1089,12 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
                 gc.allocation_sample_counter = 1
             else:
                 gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 16
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        self.gc.gc_set_allocation_sampling(16)
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
         
         # Allocate 16 times = 512B
         for _ in range(16):
@@ -1080,9 +1115,11 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
                 gc.allocation_sample_counter = 1
             else:
                 gc.allocation_sample_counter += 1
+        
+        sample_allocated_bytes = 768
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
-        sample_allocated_bytes = 768
 
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
@@ -1112,6 +1149,9 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
                 gc.allocation_sample_counter = 1
             else:
                 gc.allocation_sample_counter += 1
+        
+        sample_allocated_bytes = 256
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes   
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
         self.gc.gc_set_allocation_sampling(256)
@@ -2090,6 +2130,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 self.stackroots.append(ref)
             elif kind == "set_gc_sampling_parameter":
                 sample_n_bytes, = actiondata
+                self.gc._get_first_sample_offset = lambda: sample_n_bytes
                 self.gc.gc_set_allocation_sampling(sample_n_bytes)
                 sampling_active[0] = sample_n_bytes != 0
             else:

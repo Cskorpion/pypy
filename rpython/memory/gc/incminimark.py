@@ -77,6 +77,7 @@ from rpython.rlib import rgc, unroll
 from rpython.memory.gc.minimarkpage import out_of_memory
 from rpython.rlib.rvmprof.rvmprof import _get_vmprof
 from rpython.rtyper.lltypesystem.llarena import ArenaError
+from rpython.rlib.rrandom import Pcg32nogcRandom
 
 #
 # Handles the objects in 2 generations:
@@ -376,7 +377,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.sample_point = llmemory.NULL
         self.initial_max_number_of_pinned_objects = 0
         self._disable_gc_sampling()
-
+        self.pcg = Pcg32nogcRandom()
 
     def setup(self):
         """Called at run-time to initialize the GC."""
@@ -534,6 +535,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             bigobj = self.nonlarge_max + 1
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
         self.initial_max_number_of_pinned_objects = self.max_number_of_pinned_objects
+        self.pcg.seed_from_time()
     
     def _disable_gc_sampling(self):
         if self.sample_point != llmemory.NULL:
@@ -550,15 +552,19 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self._disable_gc_sampling()
         if sample_n_bytes == 0:
             return True
-        ll_assert(sample_n_bytes % WORD == 0, "Sampling size must be word aligned")
+        assert sample_n_bytes % WORD == 0, "Sampling size must be word aligned"
         self.max_number_of_pinned_objects = 0 # No new pinned objs from now on
         self.sample_allocated_bytes = sample_n_bytes
         # Activate sampling only if there are no pinned objects in nursery,
         # else wait for pinned objs in nursery to be gone after collection
         if self.pinned_objects_in_nursery == 0:
-            self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes)
+            first_sample = self._get_first_sample_offset()
+            self.sample_point = self._bump_pointer(self.nursery_free, first_sample)
             self._set_nursery_top_for_sampling()
         return True
+    
+    def _get_first_sample_offset(self):
+        return intmask(self.pcg.randbelow(self.sample_allocated_bytes) & ~((1 << WORD) - 1))
     
     def _set_nursery_top_for_sampling(self):
         self.real_nursery_top = self.nursery_top # save 'real' nursery top
