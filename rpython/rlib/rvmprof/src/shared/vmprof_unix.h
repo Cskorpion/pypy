@@ -40,7 +40,7 @@ RPY_EXTERN long vmprof_exit_signal(void);
 #ifndef RPYTHON_VMPROF
 PY_THREAD_STATE_T * _get_pystate_for_this_thread(void);
 #endif
-int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc);
+int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc, int signal);
 
 /* *************************************************************
  * the signal handler
@@ -50,7 +50,7 @@ int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, i
 #include <setjmp.h>
 
 void segfault_handler(int arg);
-int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type);
+int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type, int signal);
 void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext);
 
 

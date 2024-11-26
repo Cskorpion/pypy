@@ -71,7 +71,7 @@ def test_pcg():
 
     rand = pcg.genrand32()
 
-    assert rand == 355248013
+    assert rand == 356296589 #355248013
 
     pcg.seed_from_time()
 

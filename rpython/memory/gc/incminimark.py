@@ -564,7 +564,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         return True
     
     def _get_first_sample_offset(self):
-        return intmask(self.pcg.randbelow(self.sample_allocated_bytes) & ~((1 << WORD) - 1))
+        return intmask(self.pcg.randbelow(self.sample_allocated_bytes)) & ~((1 << WORD) - 1)
     
     def _set_nursery_top_for_sampling(self):
         self.real_nursery_top = self.nursery_top # save 'real' nursery top

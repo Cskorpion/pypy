@@ -65,8 +65,8 @@ def enable(space, fileno, period, memory, lines, native, real_time):
     except rvmprof.VMProfError as e:
         raise VMProfError(space, e)
 
-@unwrap_spec(fileno=int, sample_n_bytes=int, native=int)
-def enable_allocation_triggered(space, fileno, sample_n_bytes=1024, native=1):
+@unwrap_spec(fileno=int, sample_n_bytes=int, interval=float, native=int)
+def enable_allocation_triggered(space, fileno, sample_n_bytes=1024, interval=0.0, native=1):
     """Enable vmprof.  Writes go to the given 'fileno', a file descriptor
     opened for writing.  *The file descriptor must remain open at least
     until disable() is called.*
@@ -74,7 +74,7 @@ def enable_allocation_triggered(space, fileno, sample_n_bytes=1024, native=1):
     No sampling intervall, vmprof gets triggered from the gc every n bytes allocated.
     """
     try:
-        rvmprof.enable_allocation_triggered(fileno, sample_n_bytes, native)
+        rvmprof.enable_allocation_triggered(fileno, sample_n_bytes, interval, native)
     except rvmprof.VMProfError as e:
         raise VMProfError(space, e)
 

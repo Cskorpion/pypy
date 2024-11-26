@@ -4,7 +4,7 @@
 
 # this is stolen from CPython's _randommodule.c
 
-from rpython.rlib.rarithmetic import r_uint, intmask, r_uint32, r_uint64
+from rpython.rlib.rarithmetic import r_uint, intmask, r_uint32, r_uint64, r_int32
 
 N = 624
 M = 397
@@ -136,13 +136,14 @@ class Pcg32nogcRandom(object):
 
     def seed_from_time(self):
         import time
-        self.state = r_uint64(time.time() * 1000)
-
+        self.state = r_uint64(time.time() * 1000)    
+    
     def randbelow(self, bound):
-
         assert bound > 0, "bound must be positive"
 
-        bound = r_uint32(bound)
+        bound = r_uint64(bound)
+
+        assert bound < 2**32, "bound must be a 32 bit u_int"
 
         # To avoid bias, we need to make the range of the RNG a multiple of
         # bound, which we do by dropping output less than a threshold.
@@ -159,7 +160,8 @@ class Pcg32nogcRandom(object):
         # value is less than 2^32.
 
 
-        threshold = -bound % bound
+        #threshold = r_uint32((2**32 - intmask(bound)) % intmask(bound))
+        threshold = (r_uint64(2**32) - bound) % bound
     
         # Uniformity guarantees that this loop will terminate.  In practice, it
         # should usually terminate quickly; on average (assuming all bounds are
@@ -170,16 +172,15 @@ class Pcg32nogcRandom(object):
         # is eliminated.
 
         while True:
-            r = self.genrand32()
+            r = r_uint64(self.genrand32())
             if r >= threshold:
-                return r % bound
-        
+                return r_uint32(r % bound)
 
     def genrand32(self):
         oldstate = self.state
         # Advance internal state
         self.state = oldstate * r_uint64(6364136223846793005) + (self.inc | 1)
         # Calculate output function (XSH RR), uses old state for max ILP
-        xorshifted = r_uint32(((oldstate >> 18) ^ oldstate) >> 27)
+        xorshifted = ((oldstate >> 18) ^ oldstate) >> 27
         rot = oldstate >> 59
-        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31))
+        return r_uint32((xorshifted >> rot) | (xorshifted << ((-rot) & 31)))

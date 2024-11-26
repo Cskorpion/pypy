@@ -164,7 +164,7 @@ class VMProf(object):
         self.is_enabled = True
     
     @jit.dont_look_inside
-    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, native=0):
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, interval=0.0, native=0):
         """Enable vmprof.  Writes go to the given 'fileno'.
         No sampling intervall, vmprof gets triggered from the gc.
         Raises VMProfError if something goes wrong.
@@ -173,7 +173,7 @@ class VMProf(object):
         if self.is_enabled:
             raise VMProfError("vmprof is already enabled")
 
-        p_error = self.cintf.vmprof_init(fileno, 0, 0, 0, "pypy", native, 0)
+        p_error = self.cintf.vmprof_init(fileno, interval, 0, 0, "pypy", native, 0)
         if p_error:
             raise VMProfError(rffi.charp2str(p_error))
 

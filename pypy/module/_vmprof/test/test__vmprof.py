@@ -1,4 +1,4 @@
-import py
+import pytest
 import sys
 from rpython.tool.udir import udir
 
@@ -27,7 +27,7 @@ class AppTestVMProf(object):
             i += 5 * WORD # header
             assert s[i    ] == '\x05'    # MARKER_HEADER
             assert s[i + 1] == '\x00'    # 0
-            assert s[i + 2] == '\x06'    # VERSION_TIMESTAMP
+            assert s[i + 2] == '\x07'    # VERSION_SAMPLE_TIMEOFFSET
             assert s[i + 3] == '\x08'    # PROFILE_RPYTHON
             assert s[i + 4] == chr(4)    # len('pypy')
             assert s[i + 5: i + 9] == 'pypy'
@@ -110,7 +110,7 @@ class AppTestVMProf(object):
         _vmprof.disable()
         assert _vmprof.is_enabled() is False
 
-    @py.test.mark.xfail(sys.platform.startswith('freebsd'), reason = "not implemented")
+    @pytest.mark.xfail(sys.platform.startswith('freebsd'), reason = "not implemented")
     def test_get_profile_path(self):
         import _vmprof
         with open(self.tmpfilename, "wb") as tmpfile:
@@ -156,12 +156,12 @@ class AppTestVMProf(object):
         _vmprof.disable()
 
     def test_enable_allocation_triggered(self):
-        # Only works un Unix
+        # Only works on Unix
         import _vmprof
 
         tmpfile = open(self.tmpfilename, 'wb')
         fd = tmpfile.fileno()
-        MARKER_GC_STACKTRACE = '\x09'
+        MARKER_GC_STACKTRACE = b'\x09'
 
         #_vmprof.enable_allocation_triggered(fd, 0)# prepare everything but dont sample in gc
         _vmprof.enable(fd, 0, 0, 0, 0, 0) # workarround for constant folding error
@@ -176,3 +176,34 @@ class AppTestVMProf(object):
         s = open(self.tmpfilename, "rb").read()
 
         assert s.count(MARKER_GC_STACKTRACE) == 4 or s.count(MARKER_GC_STACKTRACE) == 5 # sometimes there is a 0x09 in there that is not a marker
+
+    def test_allocation_and_time_sampling(self):
+        # Only works on Unix
+        import _vmprof
+
+        tmpfile = open(self.tmpfilename, 'wb')
+        fd = tmpfile.fileno()
+        MARKER_GC_STACKTRACE = b'\x09'
+        MARKER_STACKTRACE = b'\x01'
+
+        #_vmprof.enable_allocation_triggered(fd, 0, 0.0001, 0)# prepare everything but dont sample in gc
+        _vmprof.enable(fd, 0.0001, 0, 0, 0, 0) # workarround for constant folding error
+        _vmprof.start_sampling()
+
+        counter = 0
+
+        for i in range(100):
+            # manually trigger some (gc) samples
+            _vmprof.sample_stack_now()
+            
+            for _ in range(10000):
+                counter += 1
+            if counter == -1: 
+                break
+
+        _vmprof.disable()
+
+        s = open(self.tmpfilename, "rb").read()
+
+        assert s.count(MARKER_GC_STACKTRACE) > 0
+        assert s.count(MARKER_STACKTRACE) > 0
