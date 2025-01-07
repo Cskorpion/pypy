@@ -588,20 +588,21 @@ class IncrementalMiniMarkGC(MovingGCBase):
         array = lltype.malloc(self._LONG_ARRAY, array_size, 'raw')
 
         index = 0
+        size_gc_header = self.size_gc_header()
         while self.young_sampled_objects.non_empty():
-            addr = self.young_sampled_objects.pop()
+            addr = self.young_sampled_objects.pop() + size_gc_header
             assert self.is_in_nursery(addr)
             survived = self.is_forwarded(addr)
 
             if survived:
                 addr = self.get_forwarding_address(addr)
 
-            typeid = self.get_type_id(addr)
-            array[index] = (typeid << 1) | survived 
+            typeid = self.get_member_index(self.get_type_id(addr))
+            array[index] = (typeid << 1) | survived
             index += 1
         
         self._cintf_vmprof_report_minor_gc(start_time, array, array_size)
-        lltype.free(array)
+        lltype.free(array, flavor='raw')
 
     def _cintf_vmprof_report_minor_gc(self, start_time, array, array_size):
         self.vmp_cintf.vmprof_report_minor_gc_objs(start_time, array, array_size)
@@ -990,8 +991,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
                     new_free = self._bump_pointer(last_nursery_free, totalsize) 
                 else:    
                     new_free = last_nursery_free
-
-                import pdb; pdb.set_trace()
 
                 if new_free <= self.nursery_top:
                     self.nursery_free = new_free

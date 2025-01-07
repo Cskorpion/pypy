@@ -789,6 +789,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
 
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
@@ -946,6 +947,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         # Set dummy vmprof trigger function
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
 
         assert self.gc.sample_allocated_bytes == sample_allocated_bytes
         assert self.gc.sample_point.offset == 128
@@ -973,6 +975,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         sample_allocated_bytes = 32
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
 
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
@@ -1005,6 +1008,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         sample_allocated_bytes = 128
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
         self.gc._vmprof_allocation_sample_now = lambda x: None
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
 
@@ -1046,6 +1050,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         sample_allocated_bytes = 768
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
@@ -1092,6 +1097,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         sample_allocated_bytes = 16
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
         self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
@@ -1118,6 +1124,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         
         sample_allocated_bytes = 768
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
 
@@ -1152,6 +1159,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         
         sample_allocated_bytes = 256
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes   
+        self.gc._cintf_vmprof_report_minor_gc = lambda gc, *args: None
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
 
         self.gc.gc_set_allocation_sampling(256)
@@ -1173,21 +1181,26 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         def dummy_trigger_func(gc):
             events.append("sample")
 
-        def dummy_report_func(gc, start_time, array, array_size):
+        def dummy_report_func(start_time, array, array_size):
             events.append([array[i] for i in range(array_size)])
         
         sample_allocated_bytes = 128
         self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
         self.gc._vmprof_allocation_sample_now = dummy_trigger_func
         self.gc._cintf_vmprof_report_minor_gc = dummy_report_func
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
 
         # Allocate 5 times = 160
         for _ in range(5):
             self.malloc(S)
 
+        # Allocate 5 more times, and these objects survive
+        for _ in range(5):
+            self.stackroots.append(self.malloc(S))
+
         self.gc._minor_collection()
 
-        assert events == ["sample"]
+        assert events == ["sample", "sample", [3, 2]]
 
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
