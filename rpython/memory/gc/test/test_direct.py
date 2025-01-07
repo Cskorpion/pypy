@@ -1166,6 +1166,29 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         assert self.gc.real_nursery_top.offset == 512 # this cannot change
         assert self.gc.allocation_sample_counter == 2
 
+    def test_vmprof_report_minor_gc(self):
+        events = []
+        
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            events.append("sample")
+
+        def dummy_report_func(gc, start_time, array, array_size):
+            events.append([array[i] for i in range(array_size)])
+        
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._cintf_vmprof_report_minor_gc = dummy_report_func
+
+        # Allocate 5 times = 160
+        for _ in range(5):
+            self.malloc(S)
+
+        self.gc._minor_collection()
+
+        assert events == ["sample"]
+
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
