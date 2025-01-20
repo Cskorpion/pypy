@@ -378,6 +378,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.initial_max_number_of_pinned_objects = 0
         self._disable_gc_sampling()
         self.pcg = Pcg32nogcRandom()
+        self.young_sampled_objects = self.AddressStack()
 
     def setup(self):
         """Called at run-time to initialize the GC."""
@@ -536,7 +537,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
         self.initial_max_number_of_pinned_objects = self.max_number_of_pinned_objects
         self.pcg.seed_from_time()
-        self.young_sampled_objects = self.AddressStack()
     
     def _disable_gc_sampling(self):
         if self.sample_point != llmemory.NULL:
@@ -547,7 +547,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.real_nursery_top = self.nursery_top
         self.sample_point = llmemory.NULL
 
-    def gc_set_allocation_sampling(self, sample_n_bytes=1024):
+    def gc_set_allocation_sampling(self, sample_n_bytes=16384):
         self.vmp_cintf = _get_vmprof().cintf
         # if sampling was already enabled, we disable it and try to reenable it with the new sampling_rate
         self._disable_gc_sampling()
@@ -585,7 +585,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
     _LONG_ARRAY = lltype.Array(lltype.Signed, hints={'nolength':True})
     def _vmprof_report_minor_gc(self, start_time):
         array_size = self.young_sampled_objects.length()
-        array = lltype.malloc(self._LONG_ARRAY, array_size, 'raw')
+        array = lltype.malloc(self._LONG_ARRAY, array_size, flavor='raw')
 
         index = 0
         size_gc_header = self.size_gc_header()
@@ -2044,7 +2044,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.free_young_rawmalloced_objects()
         #            
         # report surviving objects and their type to vmprof    
-        if self.young_sampled_objects.non_empty():
+        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
             self._vmprof_report_minor_gc(start)
         #
         # All live nursery objects are out of the nursery or pinned inside

@@ -84,6 +84,8 @@ int vmprof_register_virtual_function(char *code_name, intptr_t code_uid,
                                      int auto_retry);
 RPY_EXTERN 
 int vmprof_sample_stack_now_gc_triggered(void);
+RPY_EXTERN 
+int vmprof_report_minor_gc_objs(double time_start, int * array_ptr, int array_size);
 
 
 void vmprof_aquire_lock(void);

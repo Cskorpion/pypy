@@ -121,10 +121,56 @@ int vmprof_sample_stack_now_gc_triggered(void) {
         commit_buffer(fd, p);
     } else {
         cancel_buffer(p);
+        vmprof_ignore_signals(0);
         return 0; // Could not sample stack
     }
 
     // Dont ignore signals anymore
+    vmprof_ignore_signals(0);
+
+    return 1;
+}
+
+int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int array_size) {
+    /* This function will be called from PyPy's GC.
+       Saves info on which objs were collected or tenured after a minor collection */
+
+    // ignore time samples while saving obj info
+    vmprof_ignore_signals(1);
+
+    int fd = vmp_profile_fileno();
+    assert(fd >= 0);
+
+    struct profbuf_s *p = reserve_buffer(fd);
+
+    if (p == NULL) {
+        printf("vmprof couldn't get free Bufffer \n");
+        return -1; // Couldn't get free Bufffer 
+    }
+
+    char marker = MARKER_OBJ_INFO_STACK;
+
+    // dont create new struct for obj info, just use prof stacktrace with new marker
+    struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
+    st->marker = marker;
+    st->sample_offset = time_start;
+    st->depth = array_size;
+
+    for(int i=0; i < array_size; i++) {
+        st->stack[i] = (void*) *(array_ptr + i);
+        printf("storing value %d \n", *(array_ptr + i));
+    }
+
+    //memcpy(st->stack, array_ptr, array_size * sizeof(int));
+
+    p->data_offset = offsetof(struct prof_stacktrace_s, marker);
+    p->data_size = (array_size * sizeof(int *) +
+                    sizeof(struct prof_stacktrace_s) -
+                    offsetof(struct prof_stacktrace_s, marker));
+
+    
+    commit_buffer(fd, p);
+
     vmprof_ignore_signals(0);
 
     return 1;

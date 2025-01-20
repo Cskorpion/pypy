@@ -158,6 +158,10 @@ def setup():
     vmprof_start_sampling = rffi.llexternal("vmprof_start_sampling", [],
                                             lltype.Void, compilation_info=eci,
                                             _nowrapper=True)
+    
+    vmprof_report_minor_gc_objs = rffi.llexternal("vmprof_report_minor_gc_objs", [rffi.DOUBLE, rffi.SIGNEDP, rffi.SIGNED],
+                                            rffi.INT, compilation_info=eci,
+                                            _nowrapper=True)
 
     return CInterface(locals())
 

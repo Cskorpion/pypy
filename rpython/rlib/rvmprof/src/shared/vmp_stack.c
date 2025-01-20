@@ -482,7 +482,6 @@ int vmp_walk_and_record_stack(PY_STACK_FRAME_T *frame, void ** result,
         //    unw_word_t x;
         //    unw_get_proc_name(&cursor, name, 64, &x);
         //    printf("  %s %p\n", name, func_addr);
-        //    printf("unw_get_proc_info for add  %p %s\n", func_addr, name);
         //}
 
         //if (func_addr == 0) {

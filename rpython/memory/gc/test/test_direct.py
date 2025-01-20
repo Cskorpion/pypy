@@ -1931,6 +1931,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
             self.allocation_sample_happend = True
         self.gc._vmprof_allocation_sample_now = _allocation_sample_now
         self.allocation_sample_happend = False
+        self.gc._cintf_vmprof_report_minor_gc = lambda start_time, array, array_size : None
         self.gc.DEBUG = random_data['debug_level']
         self.make_prebuilts(random_data)
         self.pinned_strings = []

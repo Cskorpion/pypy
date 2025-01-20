@@ -20,6 +20,7 @@
 #define MARKER_META '\x07'
 #define MARKER_NATIVE_SYMBOLS '\x08'
 #define MARKER_GC_STACKTRACE '\x09'
+#define MARKER_OBJ_INFO_STACK '\x0A'
 
 #define VERSION_BASE '\x00'
 #define VERSION_THREAD_ID '\x01'
