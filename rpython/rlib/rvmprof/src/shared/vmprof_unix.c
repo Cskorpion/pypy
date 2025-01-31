@@ -158,7 +158,6 @@ int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int arr
 
     for(int i=0; i < array_size; i++) {
         st->stack[i] = (void*) *(array_ptr + i);
-        printf("storing value %d \n", *(array_ptr + i));
     }
 
     //memcpy(st->stack, array_ptr, array_size * sizeof(int));

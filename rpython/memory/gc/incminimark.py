@@ -1067,6 +1067,9 @@ class IncrementalMiniMarkGC(MovingGCBase):
             new_free = self._bump_pointer(result, totalsize)
             if new_free <= self.nursery_top:
                 self.nursery_free = new_free
+                # Case: Allocation sampled in sampling loop, but obj did not fit into nursery => no obj info recorded so far => do it now
+                for _ in range(num_samples):
+                    self.young_sampled_objects.append(result)
                 ll_assert(self.nursery_free <= self.nursery_top, "nursery overflow")
                 break
             #

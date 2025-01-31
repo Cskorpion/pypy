@@ -1202,6 +1202,35 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert events == ["sample", "sample", [3, 2]]
 
+    def test_vmprof_bug_obj_info_recorded_after_minor(self):
+        events = []
+        
+        # Set dummy vmprof trigger functions & activate sampling
+        def dummy_trigger_func(gc):
+            events.append("sample")
+
+        def dummy_report_func(start_time, array, array_size):
+            pass
+        
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._cintf_vmprof_report_minor_gc = dummy_report_func
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        for _ in range(15):# nursery_free: 0 => 480
+            self.malloc(S)
+
+        # Three times the allocation should have been recorded
+        assert self.gc.young_sampled_objects.length() == 3
+
+        # Does not fit into nursery => triggers a collecten
+        # But is allocated AFTER the collection => allocation recorded after collection
+        self.malloc(VAR, 3)
+
+        assert self.gc.nursery_free.offset == 40
+
+        assert self.gc.young_sampled_objects.length() == 1
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
