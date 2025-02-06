@@ -400,6 +400,12 @@ class BaseGCTransformer(object):
 
         return hop.cast_result(rmodel.inputconst(lltype.Ptr(ARRAY_TYPEID_MAP),
                                         lltype.nullptr(ARRAY_TYPEID_MAP)))
+    
+    def gct_gc_set_allocation_sampling(self, hop):
+        op = hop.spaceop
+        hop.genop("same_as",
+                  [rmodel.inputconst(lltype.Bool, False)],
+                  resultvar=op.result)
 
 
 class MinimalGCTransformer(BaseGCTransformer):

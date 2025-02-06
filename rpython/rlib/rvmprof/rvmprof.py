@@ -8,6 +8,7 @@ from rpython.rtyper.annlowlevel import cast_base_ptr_to_instance
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi
 from rpython.rtyper.lltypesystem.lloperation import llop
 from rpython.rlib.rweaklist import RWeakListMixin
+from rpython.rlib.nonconst import NonConstant
 
 MAX_FUNC_NAME = 1023
 
@@ -34,6 +35,12 @@ class FakeWeakCodeObjectList(object):
         pass
     def get_all_handles(self):
         return []
+    
+@jit.dont_look_inside
+def gc_set_allocation_sampling(sample_n_bytes=1024):
+    if not llop.gc_set_allocation_sampling(lltype.Bool, sample_n_bytes):
+        raise VMProfError("GC activation function not initialized")
+
 
 class VMProf(object):
     """
@@ -52,6 +59,10 @@ class VMProf(object):
         self._cleanup_()
         self._code_unique_id = 4
         self.cintf = cintf.setup()
+        self.sample_n_bytes = 0
+        self.gc_set_allocation_sampling = gc_set_allocation_sampling
+        if NonConstant(False):
+            self.gc_set_allocation_sampling = "gc"
 
     def _cleanup_(self):
         self.is_enabled = False
@@ -152,6 +163,37 @@ class VMProf(object):
         if res < 0:
             raise VMProfError(os.strerror(rposix.get_saved_errno()))
         self.is_enabled = True
+    
+    @jit.dont_look_inside
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, interval=0.0, native=0):
+        """Enable vmprof.  Writes go to the given 'fileno'.
+        No sampling intervall, vmprof gets triggered from the gc.
+        Raises VMProfError if something goes wrong.
+        """
+        assert fileno >= 0
+        if self.is_enabled:
+            raise VMProfError("vmprof is already enabled")
+
+        p_error = self.cintf.vmprof_init(fileno, interval, 0, 0, "pypy", native, 0)
+        if p_error:
+            raise VMProfError(rffi.charp2str(p_error))
+
+        self._gather_all_code_objs()
+        res = self.cintf.vmprof_enable(0, native, 0)
+
+        self.sample_n_bytes = sample_n_bytes
+
+        set_alloc_sampling = self.gc_set_allocation_sampling
+        set_alloc_sampling(sample_n_bytes)
+
+        if res < 0:
+            raise VMProfError(os.strerror(rposix.get_saved_errno()))
+        self.is_enabled = True
+
+    @jit.dont_look_inside
+    @rgc.no_collect
+    def sample_stack_now(self):
+        self.cintf.vmprof_sample_stack_now_gc_triggered()
 
     @jit.dont_look_inside
     def disable(self):
@@ -160,6 +202,10 @@ class VMProf(object):
         """
         if not self.is_enabled:
             raise VMProfError("vmprof is not enabled")
+        
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(0)
         self.is_enabled = False
         res = self.cintf.vmprof_disable()
         if res < 0:
@@ -178,6 +224,10 @@ class VMProf(object):
         Temporarily stop the sampling of stack frames. Signals are still
         delivered, but are ignored.
         """
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(0)
+
         fd = self.cintf.vmprof_stop_sampling()
         return rffi.cast(lltype.Signed, fd)
 
@@ -185,6 +235,10 @@ class VMProf(object):
         """
         Undo the effect of stop_sampling
         """
+        if self.sample_n_bytes != 0:
+            set_alloc_sampling = self.gc_set_allocation_sampling
+            set_alloc_sampling(self.sample_n_bytes)
+            
         self.cintf.vmprof_start_sampling()
     
 

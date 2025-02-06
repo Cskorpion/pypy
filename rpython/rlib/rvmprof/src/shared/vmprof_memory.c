@@ -53,6 +53,10 @@ long get_current_proc_rss(void)
     char buf[1024];
     int i = 0;
 
+    if (proc_file == -1) {
+        return -1;
+    }
+
     if (lseek(proc_file, 0, SEEK_SET) == -1)
         return -1;
     if (read(proc_file, buf, 1024) == -1)

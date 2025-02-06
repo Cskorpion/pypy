@@ -77,7 +77,7 @@ void vmprof_set_profile_interval_usec(long value) {
 char *vmprof_init(int fd, double interval, int memory,
                   int proflines, const char *interp_name, int native, int real_time)
 {
-    if (!(interval >= 1e-6 && interval < 1.0)) {   /* also if it is NaN */
+    if (!((interval >= 1e-6 && interval < 1.0) || interval == 0)) {   /* also if it is NaN */ // can be 0 for allocation based sampling 
         return "bad value for 'interval'";
     }
     prepare_interval_usec = (int)(interval * 1000000.0);
@@ -85,12 +85,14 @@ char *vmprof_init(int fd, double interval, int memory,
     if (prepare_concurrent_bufs() < 0)
         return "out of memory";
 #if VMPROF_UNIX
-    if (real_time) {
-        signal_type = SIGALRM;
-        itimer_type = ITIMER_REAL;
-    } else {
-        signal_type = SIGPROF;
-        itimer_type = ITIMER_PROF;
+    if(interval != 0) {
+        if (real_time) {
+            signal_type = SIGALRM;
+            itimer_type = ITIMER_REAL;
+        } else {
+            signal_type = SIGPROF;
+            itimer_type = ITIMER_PROF;
+        }
     }
     set_current_codes(NULL);
     assert(fd >= 0);
@@ -109,6 +111,15 @@ char *vmprof_init(int fd, double interval, int memory,
     }
     return NULL;
 }
+
+#if VMPROF_UNIX
+double vmp_get_time() {
+    double NS_PER_SEC = 1e9;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double) t.tv_sec + (double) t.tv_nsec / NS_PER_SEC;
+}
+#endif
 
 int opened_profile(const char *interp_name, int memory, int proflines, int native, int real_time)
 {
@@ -135,7 +146,7 @@ int opened_profile(const char *interp_name, int memory, int proflines, int nativ
     }
     header.interp_name[0] = MARKER_HEADER;
     header.interp_name[1] = '\x00';
-    header.interp_name[2] = VERSION_TIMESTAMP;
+    header.interp_name[2] = VERSION_SAMPLE_TIMEOFFSET;
     header.interp_name[3] = memory*PROFILE_MEMORY + proflines*PROFILE_LINES + \
                             native*PROFILE_NATIVE + real_time*PROFILE_REAL_TIME;
 #ifdef RPYTHON_VMPROF
@@ -151,6 +162,16 @@ int opened_profile(const char *interp_name, int memory, int proflines, int nativ
 
     /* Write the time and the zone to the log file, profiling will start now */
     (void)vmp_write_time_now(MARKER_TIME_N_ZONE);
+
+#if VMPROF_UNIX
+    // Write start time and save for associating sample times with start time
+    double start_time_offset = vmp_get_time();
+    char sto_s[20];
+
+    sprintf(sto_s, "%f", start_time_offset);
+    
+    vmp_write_meta("start_time_offset", sto_s);
+#endif
 
     /* write some more meta information */
     vmp_write_meta("os", machine);

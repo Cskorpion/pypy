@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <time.h>
+#include <ucontext.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -80,7 +81,7 @@ int install_pthread_atfork_hooks(void) {
     */
     if (atfork_hook_installed)
         return 0;
-    int ret = pthread_atfork(atfork_disable_timer, atfork_enable_timer, atfork_close_profile_file);
+    int ret = pthread_atfork(atfork_vmprof_parent_disable_timer, atfork_vmprof_parent_enable_timer, atfork_vmprof_child_close_profile_file);
     if (ret != 0)
         return -1;
     atfork_hook_installed = 1;
@@ -92,16 +93,99 @@ void segfault_handler(int arg)
     longjmp(restore_point, SIGSEGV);
 }
 
-int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc)
+#ifdef RPYTHON_VMPROF
+int vmprof_sample_stack_now_gc_triggered(void) {
+    /* This function will be called from PyPy's GC */
+
+    // Ignore signals, for simultaneous time and allocation sampling
+    // A gc sample should not be interrupted by a time sample and vice versa (gc cannot interrupt time-sample in general)
+    vmprof_ignore_signals(1);
+
+    int fd = vmp_profile_fileno();
+    assert(fd >= 0);
+
+    struct profbuf_s *p = reserve_buffer(fd);
+    ucontext_t uc;
+
+    if (p == NULL) {
+        printf("vmprof couldn't get free Bufffer \n");
+        return -1; // Couldn't get free Bufffer 
+    } else if (getcontext(&uc) == -1) {
+        printf("vmprof couldn't get user context \n");
+        return -2; // Couldn't get user context
+    }
+    // last arg is signal, need to tell the stackwalk that there is NO signal frame to look for
+    int commit = _vmprof_sample_stack(p, NULL, &uc, MARKER_GC_STACKTRACE, 0);
+
+    if (commit) {
+        commit_buffer(fd, p);
+    } else {
+        cancel_buffer(p);
+        vmprof_ignore_signals(0);
+        return 0; // Could not sample stack
+    }
+
+    // Dont ignore signals anymore
+    vmprof_ignore_signals(0);
+
+    return 1;
+}
+
+int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int array_size) {
+    /* This function will be called from PyPy's GC.
+       Saves info on which objs were collected or tenured after a minor collection */
+
+    // ignore time samples while saving obj info
+    vmprof_ignore_signals(1);
+
+    int fd = vmp_profile_fileno();
+    assert(fd >= 0);
+
+    struct profbuf_s *p = reserve_buffer(fd);
+
+    if (p == NULL) {
+        printf("vmprof couldn't get free Bufffer \n");
+        return -1; // Couldn't get free Bufffer 
+    }
+
+    char marker = MARKER_OBJ_INFO_STACK;
+
+    // dont create new struct for obj info, just use prof stacktrace with new marker
+    struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
+    st->marker = marker;
+    st->sample_offset = time_start;
+    st->depth = array_size;
+
+    for(int i=0; i < array_size; i++) {
+        st->stack[i] = (void*) *(array_ptr + i);
+    }
+
+    //memcpy(st->stack, array_ptr, array_size * sizeof(int));
+
+    p->data_offset = offsetof(struct prof_stacktrace_s, marker);
+    p->data_size = (array_size * sizeof(int *) +
+                    sizeof(struct prof_stacktrace_s) -
+                    offsetof(struct prof_stacktrace_s, marker));
+
+    
+    commit_buffer(fd, p);
+
+    vmprof_ignore_signals(0);
+
+    return 1;
+}
+#endif
+
+int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type, int signal)
 {
     int depth;
     struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
-    st->marker = MARKER_STACKTRACE;
-    st->count = 1;
+    st->marker = marker_type;
+    st->sample_offset = vmp_get_time();
 #ifdef RPYTHON_VMPROF
-    depth = get_stack_trace(get_vmprof_stack(), st->stack, MAX_STACK_DEPTH-1, (intptr_t)GetPC(uc));
+    depth = get_stack_trace(get_vmprof_stack(), st->stack, MAX_STACK_DEPTH-1, (intptr_t)GetPC(uc), signal);
 #else
-    depth = get_stack_trace(tstate, st->stack, MAX_STACK_DEPTH-1, (intptr_t)NULL);
+    depth = get_stack_trace(tstate, st->stack, MAX_STACK_DEPTH-1, (intptr_t)NULL, signal);
 #endif
     // useful for tests (see test_stop_sampling)
 #ifndef RPYTHON_LL2CTYPES
@@ -247,9 +331,9 @@ void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext)
             /* ignore this signal: there are no free buffers right now */
         } else {
 #ifdef RPYTHON_VMPROF
-            commit = _vmprof_sample_stack(p, NULL, (ucontext_t*)ucontext);
+            commit = _vmprof_sample_stack(p, NULL, (ucontext_t*)ucontext, MARKER_STACKTRACE, 1);
 #else
-            commit = _vmprof_sample_stack(p, tstate, (ucontext_t*)ucontext);
+            commit = _vmprof_sample_stack(p, tstate, (ucontext_t*)ucontext, MARKER_STACKTRACE, 1);
 #endif
             if (commit) {
                 commit_buffer(fd, p);
@@ -262,7 +346,7 @@ void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext)
         }
 
         errno = saved_errno;
-    }
+    } 
 
     vmprof_exit_signal();
 }
@@ -316,7 +400,7 @@ int remove_sigprof_timer(void)
     return 0;
 }
 
-void atfork_disable_timer(void)
+void atfork_vmprof_parent_disable_timer(void)
 {
     if (vmprof_get_profile_interval_usec() > 0) {
         remove_sigprof_timer();
@@ -324,14 +408,14 @@ void atfork_disable_timer(void)
     }
 }
 
-void atfork_close_profile_file(void)
+void atfork_vmprof_child_close_profile_file(void)
 {
-    int fd = vmp_profile_fileno();
-    if (fd != -1)
-        close(fd);
-    vmp_set_profile_fileno(-1);
+    //int fd = vmp_profile_fileno();
+    //if (fd != -1)
+    //    close(fd);
+    //vmp_set_profile_fileno(-1);
 }
-void atfork_enable_timer(void)
+void atfork_vmprof_parent_enable_timer(void)
 {
     if (vmprof_get_profile_interval_usec() > 0) {
         install_sigprof_timer();
@@ -362,7 +446,7 @@ int vmprof_enable(int memory, int native, int real_time)
     init_cpyprof(native);
 #endif
     assert(vmp_profile_fileno() >= 0);
-    assert(vmprof_get_prepare_interval_usec() > 0);
+    assert(vmprof_get_prepare_interval_usec() >= 0); // Allow 0 here
     vmprof_set_profile_interval_usec(vmprof_get_prepare_interval_usec());
     if (memory && setup_rss() == -1)
         goto error;
@@ -372,10 +456,13 @@ int vmprof_enable(int memory, int native, int real_time)
 #endif
     if (install_pthread_atfork_hooks() == -1)
         goto error;
-    if (install_sigprof_handler() == -1)
-        goto error;
-    if (install_sigprof_timer() == -1)
-        goto error;
+    // Dont install timer and handler if period == 0
+    if(vmprof_get_profile_interval_usec() != 0) { 
+        if (install_sigprof_handler() == -1)
+            goto error;
+        if (install_sigprof_timer() == -1)
+            goto error;
+    }
     signal_handler_ignore = 0;
     return 0;
 
@@ -401,16 +488,19 @@ int close_profile(void)
 int vmprof_disable(void)
 {
     signal_handler_ignore = 1;
+    int did_time_sampling = vmprof_get_profile_interval_usec() != 0;
     vmprof_set_profile_interval_usec(0);
 #ifdef VMP_SUPPORTS_NATIVE_PROFILING
     disable_cpyprof();
 #endif
-
-    if (remove_sigprof_timer() == -1) {
-        return -1;
-    }
-    if (remove_sigprof_handler() == -1) {
-        return -1;
+    // period == 0 => no timer installed => not timer to remove
+    if(did_time_sampling) {
+        if (remove_sigprof_timer() == -1) {
+            return -1;
+        }
+        if (remove_sigprof_handler() == -1) {
+            return -1;
+        }
     }
 #ifdef VMPROF_UNIX
     if ((vmprof_get_signal_type() == SIGALRM) && remove_threads() == -1) {
@@ -489,7 +579,7 @@ static inline PyFrameObject* PyThreadState_GetFrame(PyThreadState *tstate)
 }
 #endif
 
-int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc)
+int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc, int signal)
 {
 #if PY_VERSION_HEX >= 0x030B0000 /* < 3.11, no pypy 3.11 at the moment*/ 
     _PyInterpreterFrame * frame;
@@ -520,9 +610,9 @@ int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, i
         fprintf(stderr, "WARNING: get_stack_trace, frame is NULL\n");
 #endif
         return 0;
-    }
+    }       
 
-    int res = vmp_walk_and_record_stack(frame, result, max_depth, 1, pc);
+    int res = vmp_walk_and_record_stack(frame, result, max_depth, signal, pc);
 
 #if PY_VERSION_HEX < 0x030B0000 && ! defined(RPYTHON_VMPROF) /* < 3.11 */
     Py_XDECREF(frame);

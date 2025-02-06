@@ -449,6 +449,15 @@ int vmp_walk_and_record_stack(PY_STACK_FRAME_T *frame, void ** result,
                 return 0;
             }
         }
+        // When sampling via PyPy's GC (=> signal == 0), we dont have signals and no signal frames.
+        // But vmprof_sample_stack_now_gc_triggered is called from PyPy's GC.
+        if (signal == 0) {
+            unw_step(&cursor); // vmp_walk_and_record_stack
+            // get_stack_trace is inlined
+            unw_step(&cursor); // _vmprof_sample_stack
+            unw_step(&cursor); // vmprof_sample_stack_now_gc_triggered
+            // No signal frames 
+        }
 #else
         // who would have guessed that unw_is_signal_frame does not work on mac os x
         if (signal) {

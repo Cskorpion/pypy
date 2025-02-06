@@ -583,6 +583,14 @@ class BaseFrameworkGCTransformer(GCTransformer):
                                               SomeAddress())
         if hasattr(self.root_walker, 'build_increase_root_stack_depth_ptr'):
             self.root_walker.build_increase_root_stack_depth_ptr(getfn)
+        
+
+        self.gc_set_allocation_sampling_ptr = None
+        if hasattr(GCClass, 'gc_set_allocation_sampling'):
+            self.gc_set_allocation_sampling_ptr = getfn(GCClass.gc_set_allocation_sampling,
+                                              [s_gc, annmodel.SomeInteger()],
+                                              annmodel.SomeBool())
+
 
 
     def create_custom_trace_funcs(self, gc, rtyper):
@@ -1669,6 +1677,18 @@ class BaseFrameworkGCTransformer(GCTransformer):
         hop.genop("direct_call",
                   [self.root_walker.gc_increase_root_stack_depth_ptr,
                    hop.spaceop.args[0]])
+
+    def gct_gc_set_allocation_sampling(self, hop):
+        op = hop.spaceop
+        if self.gc_set_allocation_sampling_ptr is None:
+            hop.genop("same_as",
+                    [rmodel.inputconst(lltype.Bool, False)],
+                    resultvar=op.result)
+        else:
+            hop.genop("direct_call",
+                    [self.gc_set_allocation_sampling_ptr, self.c_const_gc, op.args[0]],
+                    resultvar=op.result)
+
 
 
 class TransformerLayoutBuilder(gctypelayout.TypeLayoutBuilder):

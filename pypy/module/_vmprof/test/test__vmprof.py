@@ -28,7 +28,7 @@ class AppTestVMProf(object):
             i += 5 * WORD # header
             assert s[i    ] == '\x05'    # MARKER_HEADER
             assert s[i + 1] == '\x00'    # 0
-            assert s[i + 2] == '\x06'    # VERSION_TIMESTAMP
+            assert s[i + 2] == '\x07'    # VERSION_SAMPLE_TIMEOFFSET
             assert s[i + 3] == '\x08'    # PROFILE_RPYTHON
             assert s[i + 4] == chr(4)    # len('pypy')
             assert s[i + 5: i + 9] == 'pypy'
@@ -92,7 +92,10 @@ class AppTestVMProf(object):
 
     def test_enable_ovf(self):
         import _vmprof
-        raises(_vmprof.VMProfError, _vmprof.enable, 2, 0, 0, 0, 0, 0)
+
+        # Disabled, bacause allocation based sampling allows interval == 0
+        #raises(_vmprof.VMProfError, _vmprof.enable, 2, 0, 0, 0, 0, 0) 
+        
         raises(_vmprof.VMProfError, _vmprof.enable, 2, -2.5, 0, 0, 0, 0)
         raises(_vmprof.VMProfError, _vmprof.enable, 2, 1e300, 0, 0, 0, 0)
         raises(_vmprof.VMProfError, _vmprof.enable, 2, 1e300 * 1e300, 0, 0, 0, 0)
@@ -152,3 +155,56 @@ class AppTestVMProf(object):
         pos3 = os.lseek(fileno, 0, os.SEEK_CUR)
         assert pos3 > pos
         _vmprof.disable()
+
+    def test_enable_allocation_triggered(self):
+        # Only works on Unix
+        import _vmprof
+
+        tmpfile = open(self.tmpfilename, 'wb')
+        fd = tmpfile.fileno()
+        MARKER_GC_STACKTRACE = b'\x09'
+
+        #_vmprof.enable_allocation_triggered(fd, 0)# prepare everything but dont sample in gc
+        _vmprof.enable(fd, 0, 0, 0, 0, 0) # workarround for constant folding error
+
+        _vmprof.sample_stack_now()# manually trigger some samples
+        _vmprof.sample_stack_now()
+        _vmprof.sample_stack_now()
+        _vmprof.sample_stack_now()
+
+        _vmprof.disable()
+
+        s = open(self.tmpfilename, "rb").read()
+
+        assert s.count(MARKER_GC_STACKTRACE) == 4 or s.count(MARKER_GC_STACKTRACE) == 5 # sometimes there is a 0x09 in there that is not a marker
+
+    def test_allocation_and_time_sampling(self):
+        # Only works on Unix
+        import _vmprof
+
+        tmpfile = open(self.tmpfilename, 'wb')
+        fd = tmpfile.fileno()
+        MARKER_GC_STACKTRACE = b'\x09'
+        MARKER_STACKTRACE = b'\x01'
+
+        #_vmprof.enable_allocation_triggered(fd, 0, 0.0001, 0)# prepare everything but dont sample in gc
+        _vmprof.enable(fd, 0.0001, 0, 0, 0, 0) # workarround for constant folding error
+        _vmprof.start_sampling()
+
+        counter = 0
+
+        for i in range(100):
+            # manually trigger some (gc) samples
+            _vmprof.sample_stack_now()
+            
+            for _ in range(10000):
+                counter += 1
+            if counter == -1: 
+                break
+
+        _vmprof.disable()
+
+        s = open(self.tmpfilename, "rb").read()
+
+        assert s.count(MARKER_GC_STACKTRACE) > 0
+        assert s.count(MARKER_STACKTRACE) > 0

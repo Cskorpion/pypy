@@ -32,7 +32,6 @@
 RPY_EXTERN void vmprof_ignore_signals(int ignored);
 RPY_EXTERN long vmprof_enter_signal(void);
 RPY_EXTERN long vmprof_exit_signal(void);
-
 /* *************************************************************
  * functions to dump the stack trace
  * *************************************************************
@@ -41,7 +40,7 @@ RPY_EXTERN long vmprof_exit_signal(void);
 #ifndef RPYTHON_VMPROF
 PY_THREAD_STATE_T * _get_pystate_for_this_thread(void);
 #endif
-int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc);
+int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, intptr_t pc, int signal);
 
 /* *************************************************************
  * the signal handler
@@ -51,7 +50,7 @@ int get_stack_trace(PY_THREAD_STATE_T * current, void** result, int max_depth, i
 #include <setjmp.h>
 
 void segfault_handler(int arg);
-int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc);
+int _vmprof_sample_stack(struct profbuf_s *p, PY_THREAD_STATE_T * tstate, ucontext_t * uc, char marker_type, int signal);
 void sigprof_handler(int sig_nr, siginfo_t* info, void *ucontext);
 
 
@@ -64,9 +63,9 @@ int install_sigprof_handler(void);
 int remove_sigprof_handler(void);
 int install_sigprof_timer(void);
 int remove_sigprof_timer(void);
-void atfork_disable_timer(void);
-void atfork_enable_timer(void);
-void atfork_close_profile_file(void);
+void atfork_vmprof_parent_disable_timer(void);
+void atfork_vmprof_parent_enable_timer(void);
+void atfork_vmprof_child_close_profile_file(void);
 int install_pthread_atfork_hooks(void);
 
 #ifdef VMP_SUPPORTS_NATIVE_PROFILING
@@ -83,6 +82,10 @@ int vmprof_disable(void);
 RPY_EXTERN
 int vmprof_register_virtual_function(char *code_name, intptr_t code_uid,
                                      int auto_retry);
+RPY_EXTERN 
+int vmprof_sample_stack_now_gc_triggered(void);
+RPY_EXTERN 
+int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int array_size);
 
 
 void vmprof_aquire_lock(void);
