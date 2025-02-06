@@ -591,15 +591,20 @@ class IncrementalMiniMarkGC(MovingGCBase):
         size_gc_header = self.size_gc_header()
         while self.young_sampled_objects.non_empty():
             addr = self.young_sampled_objects.pop() + size_gc_header
-            assert self.is_in_nursery(addr)
-            survived = self.is_forwarded(addr)
+            if self.is_in_nursery(addr):
+                #assert self.is_in_nursery(addr)
+                survived = self.is_forwarded(addr)
 
-            if survived:
-                addr = self.get_forwarding_address(addr)
+                if survived:
+                    addr = self.get_forwarding_address(addr)
+
+            else:
+                survived = self.get_type_id(addr) & GCFLAG_VISITED_RMY
 
             typeid = self.get_member_index(self.get_type_id(addr))
             array[index] = (typeid << 1) | survived
             index += 1
+
         
         self._cintf_vmprof_report_minor_gc(start_time, array, array_size)
         lltype.free(array, flavor='raw')
@@ -968,8 +973,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # Allocation triggered profiling with VMProf
             if self.nursery_top == self.sample_point:# sample_point == llmemory.NULL if sampling disabled, or 'paused' due to pinned objs
 
-                #assert self.pinned_objects_in_nursery == 0, "no pinned objects allowed yet"
-
                 while True:
                     self._vmprof_allocation_sample_now(self)
                     num_samples += 1
@@ -1226,6 +1229,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
                 self._vmprof_allocation_sample_now(self)
                 self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
+                self.young_sampled_objects.append(result)
             
             # Substract obj size from sample point to account for non-sampled leftover
             self.sample_point -= size_to_sample
@@ -2040,15 +2044,15 @@ class IncrementalMiniMarkGC(MovingGCBase):
         # visit the P and O lists from rawrefcount, if enabled.
         if self.rrc_enabled:
             self.rrc_minor_collection_free()
+        #            
+        # report surviving objects and their type to vmprof    
+        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
+            self._vmprof_report_minor_gc(start)
         #
         # Walk the list of young raw-malloced objects, and either free
         # them or make them old.
         if self.young_rawmalloced_objects:
             self.free_young_rawmalloced_objects()
-        #            
-        # report surviving objects and their type to vmprof    
-        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
-            self._vmprof_report_minor_gc(start)
         #
         # All live nursery objects are out of the nursery or pinned inside
         # the nursery.  Create nursery barriers to protect the pinned objects,
