@@ -1,7 +1,7 @@
 import _random
 
 from rpython.rlib.rarithmetic import intmask
-from rpython.rlib.rrandom import Random, N, r_uint
+from rpython.rlib.rrandom import Random, N, r_uint, Pcg32nogcRandom
 from rpython.translator.c.test.test_genc import compile
 
 # the numbers were created by using CPython's _randommodule.c
@@ -65,3 +65,15 @@ def test_translate():
         return float(rnd.genrand32()) + rnd.random()
     fc = compile(f, [int, int])
     assert fc(1, 2) == f(1, 2)
+
+def test_pcg():
+    pcg = Pcg32nogcRandom()
+
+    rand = pcg.genrand32()
+
+    assert rand == 356296589 #355248013
+
+    pcg.seed_from_time()
+
+    for bound in range(1, 100000):
+        assert 0 <= pcg.randbelow(bound) < bound

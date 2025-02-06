@@ -8,7 +8,7 @@ see as the list of roots (stack and prebuilt objects).
 
 import py
 
-from hypothesis import strategies, given, assume, example
+from hypothesis import strategies, given, assume, example, settings, Verbosity, Phase, reproduce_failure
 
 from rpython.rtyper.lltypesystem import lltype, llmemory
 from rpython.memory.gctypelayout import TypeLayoutBuilder, FIN_HANDLER_ARRAY
@@ -16,6 +16,7 @@ from rpython.memory.gctypelayout import WEAKREF, WEAKREFPTR
 from rpython.rlib.rarithmetic import LONG_BIT, is_valid_int
 from rpython.memory.gc import minimark, incminimark
 from rpython.memory.gctypelayout import zero_gc_pointers_inside, zero_gc_pointers
+from rpython.memory.gcheader import GCHeaderBuilder
 from rpython.rlib.debug import debug_print
 from rpython.rlib.test.test_debug import debuglog
 from rpython.rlib import rgc
@@ -701,6 +702,470 @@ class TestIncrementalMiniMarkGCSimple(TestMiniMarkGCSimple):
         assert adr4 == adr3
         assert obj3.x == 456     # it is populated now
 
+class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
+    from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
+
+    GC_PARAMS = {'nursery_size': 4 * 16 * WORD} # 512 byte
+
+    def test_vmprof_allocation_based_sampling_dummy(self):
+
+        def dummy_trigger_func(gc):
+            gc.allocation_sample_dummy = True
+
+        sample_allocated_bytes = 128
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        self.malloc(S)# fixedsize malloc
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert not hasattr(self.gc, "allocation_sample_dummy")
+        assert self.gc.nursery_top.offset == 128 
+
+        self.malloc(S) # sample should be done here
+
+        assert self.gc.allocation_sample_dummy == True
+        assert self.gc.nursery_top.offset == 256
+    
+    def test_vmprof_allocation_based_sampling_dummy_multiple_samples(self):
+
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 128
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        self.gc.gc_set_allocation_sampling(128)
+
+        self.malloc(S)# free:0->32
+        self.malloc(S)# free:32->64
+        self.malloc(S)# free:64->96
+        self.malloc(S)# free:96->128
+
+        assert not hasattr(self.gc, "allocation_sample_counter")
+        assert self.gc.nursery_top.offset == 128 
+
+        # nursery free = 128 = nursery top => next allocation should trigger collect_and_reserve
+
+        self.malloc(S)# free:128->160 -- sample should be done here
+
+        assert self.gc.allocation_sample_counter == 1
+        assert self.gc.nursery_top.offset == 256
+
+        self.malloc(S)# free:160->192
+        self.malloc(S)# free:192->224
+        self.malloc(S)# free:224->256
+
+        # Should not have sampled yet
+        assert self.gc.allocation_sample_counter == 1
+        assert self.gc.nursery_top.offset == 256 
+
+        # nursery free = 256 = nursery top => next allocation should trigger collect_and_reserve
+
+        self.malloc(S)# free:256->288 -- sample should be done here
+
+        assert self.gc.allocation_sample_counter == 2
+        assert self.gc.nursery_top.offset == 384
+        
+    
+    def test_vmprof_allocation_based_sampling_minor_collection(self):
+
+        def dummy_trigger_func(gc):
+            pass
+
+        sample_allocated_bytes = 128
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        self.malloc(S)# free:0->32
+        self.malloc(S)# free:32->64
+        self.malloc(S)# free:64->96
+        self.malloc(S)# free:96->128
+        self.malloc(S)# free:128->160
+
+        assert self.gc.nursery_free.offset == 160
+        assert self.gc.nursery_top.offset == 256 
+        assert self.gc.sample_point.offset == 256 
+
+        self.malloc(S)# free:160->192
+        
+        self.gc._minor_collection()
+
+        assert self.gc.nursery_free.offset == 0
+        assert self.gc.nursery_top.offset == 64 
+        assert self.gc.sample_point.offset == 64
+    
+    def test_vmprof_allocation_based_sampling_vmprof_hook_enable(self):
+        """ Test if sampling can be enabled """
+
+        sample_allocated_bytes = 384
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.sample_allocated_bytes == 384
+        assert self.gc.sample_point.offset == 384
+    
+    def test_vmprof_allocation_based_sampling_vmprof_hook_disable(self):
+        """ Test if sampling can be enabled and then be disabled again """
+
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.sample_allocated_bytes == 128
+        assert self.gc.sample_point.offset == 128
+
+        self.gc.gc_set_allocation_sampling(0)
+
+        assert self.gc.sample_allocated_bytes == 0
+        assert self.gc.sample_point == llmemory.NULL
+      
+    def test_vmprof_pinnned_object_after_minor(self):
+        """ Test if _minor_collection does not enable sampling if there are pinned objs """
+        
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        
+        sample_allocated_bytes = 64
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        s = self.malloc(STR, 1)
+        # s shall not be collected
+        self.stackroots.append(s)
+        pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))# pinned obj at 32
+        assert pinned
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.sample_point == llmemory.NULL # sampling should be 'paused' due to pinned obj in nursery
+
+        self.gc.collect()
+
+        assert self.gc.sample_point == llmemory.NULL # sampling should still be 'paused' due to pinned obj not collected
+
+
+    def test_vmprof_disable_sampling_allow_pinning(self):
+        """ Test that pinning is 'turned back on' after sampling is disabled """
+
+        sample_allocated_bytes = 384
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        
+        assert self.gc.max_number_of_pinned_objects == 4
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.max_number_of_pinned_objects == 0
+        assert self.gc.initial_max_number_of_pinned_objects == 4
+
+        self.gc._get_first_sample_offset = lambda: 0
+        self.gc.gc_set_allocation_sampling(0)
+
+        assert self.gc.max_number_of_pinned_objects == 4
+
+    def test_vmprof_pinnned_object_waiting(self):
+        """ Test if the gc waits for the pinned obj to be gone before sampling """
+
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+            
+        sample_allocated_bytes = 64
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        # First, pin an object
+        s = self.malloc(STR, 1)
+        pinned = self.gc.pin(llmemory.cast_ptr_to_adr(s))
+        assert pinned
+        assert self.gc.pinned_objects_in_nursery == 1
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.max_number_of_pinned_objects == 0
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes # assert that sampling is enabled but 'paused'
+        assert self.gc.sample_point == llmemory.NULL # assert that sampling is enabled but 'paused'
+
+        # allocate 3 times, the last malloc should NOT trigger a sample, as there is a pinned obj in the nursery
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert not hasattr(self.gc, "allocation_sample_counter")
+
+        self.gc.unpin(llmemory.cast_ptr_to_adr(s)) # unpin the object
+        assert self.gc.pinned_objects_in_nursery == 0
+
+        self.gc.collect() # this collection clears the nursery and should enable sampling as there are no more pinned objs now
+
+        assert self.gc.sample_point.offset == 64 # assert that sampling is activated now
+
+        # allocate 3 times, the last malloc should trigger a sample, as there are no pinned objs in the nursery
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert self.gc.allocation_sample_counter == 1
+
+
+    def test_vmprof_allocation_based_sampling_many_samples(self):
+        
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes
+        assert self.gc.sample_point.offset == 128
+
+
+        self.malloc(S)# off by one bc for sample_n_bytes == 128 we sample at overflow, i.e when nursery free goes from 128 => 160
+
+        # one Sample after every 4 mallocs 
+        for _ in range(256):
+            self.malloc(S)
+
+        assert self.gc.allocation_sample_counter == 64
+
+
+    def test_vmprof_allocation_based_sampling_big_object(self):
+
+        # TODO: replace the last malloc with large obj allocation and set assert 
+        #             p = self.malloc(VAR, i)
+        
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 32
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+
+        # Set dummy vmprof trigger function
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        assert self.gc.sample_allocated_bytes == sample_allocated_bytes
+        assert self.gc.sample_point.offset == 32
+
+
+        self.malloc(S)
+        for i in range(15):
+            self.malloc(S)
+        
+        assert self.gc.nursery_free.offset == 512
+        assert self.gc.sample_point.offset == 512
+        assert self.gc.nursery_top.offset == self.gc.real_nursery_top.offset == 512
+
+        assert self.gc.allocation_sample_counter == 15
+
+        self.malloc(STR, 2)# plus one to trigger 2nd sample
+        assert self.gc.nursery_free.offset == 32
+
+        assert self.gc.allocation_sample_counter == 16
+
+    def test_vmprof_leftover_sample_point(self):
+
+        # Set dummy vmprof trigger function & activate sampling
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._vmprof_allocation_sample_now = lambda x: None
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+
+        # Allocate 12 times = 384B
+        for _ in range(12):
+            self.malloc(S)
+
+        sample_allocated_bytes = 96
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc.gc_set_allocation_sampling(96)
+
+        assert self.gc.nursery_free.offset == 384
+        assert self.gc.nursery_top.offset == 480
+
+        # Malloc 3 times
+        self.malloc(S)
+        self.malloc(S)
+        self.malloc(S)
+
+        assert self.gc.nursery_top.offset == self.gc.nursery_free.offset == 480
+
+        # Sample done, but next sampling point is outside nursery
+        self.malloc(S)
+        assert self.gc.sample_point > self.gc.nursery_top
+
+        self.gc._minor_collection()
+
+        # New sampling point at leftover point
+        assert self.gc.sample_point.offset == 64
+        assert self.gc.nursery_top.offset == 64
+
+    def test_vmprof_sampling_point_larger_than_nursery(self):
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 768
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        assert self.gc.sample_point.offset == 768
+        assert self.gc.nursery_top.offset == 512
+        assert self.gc.real_nursery_top.offset == 512
+
+        # Allocate 17 times = 544B
+        for _ in range(17):
+            self.malloc(S)
+
+        # Collection triggered here 
+        # Former sample_point = 768 - nursery_Size(512) = new sample_point = 256
+
+        assert self.gc.nursery_free.offset == 32
+        assert self.gc.nursery_top.offset == 256
+        assert self.gc.sample_point.offset == 256
+
+        # Allocate 7 times = 224B
+        for _ in range(7):
+            self.malloc(S)
+
+        assert self.gc.nursery_free.offset == 256
+        assert not hasattr(self.gc, "allocation_sample_counter")
+
+        self.malloc(S)
+
+        assert self.gc.nursery_free.offset == 288
+        assert self.gc.nursery_top.offset == 512
+
+        assert self.gc.allocation_sample_counter == 1
+    
+    def test_vmprof_invalid_pointer_bug_after_collect_and_reserve(self):
+        # when allocating in collect_and_reserve, the pointer to be returned must be substracted the obj size,
+        # IFF. we DID do a collection, we must NOT substract the size.
+
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+
+        sample_allocated_bytes = 16
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+        
+        # Allocate 16 times = 512B
+        for _ in range(16):
+            self.malloc(S)
+
+        assert self.gc.nursery_top.offset == 512
+
+        # This malloc triggers a collection in collect_and_reserve
+        p = self.malloc(S) # this fails at an assert if a post-collection nursery_free is substracted the obj size in collect_and_reserve
+
+        p.x = 117 # this should then fail aswell
+
+
+    def test_vmprof_external_malloc_sampling(self):
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        
+        sample_allocated_bytes = 768
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        type_id = self.get_type_id(VAR)
+        size = self.gc.nonlarge_max + 1 # 64
+
+        self.gc.external_malloc(type_id, size, alloc_young=True) # size of reserved obj = 16 + 8 * 64 = 528
+
+        assert self.gc.nursery_top.offset == 240 # 768 - 528
+        assert self.gc.sample_point.offset == 240
+        assert not hasattr(self.gc, "allocation_sample_counter")
+
+        self.gc.external_malloc(type_id, size, alloc_young=True)
+
+        assert self.gc.nursery_top.offset == 240 + 768 - 528 # last sample_point + sample_allocated_bytes - obj_size
+        assert self.gc.sample_point.offset == 240 + 768 - 528 
+        assert self.gc.allocation_sample_counter == 1
+
+    
+    def test_vmprof_external_malloc_wrong_nursery_top_bug(self):
+        """ Test if real_nursery_top is remained correctly by external_malloc """
+        assert self.gc.real_nursery_top.offset == 512
+        
+      # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            if "allocation_sample_counter" not in gc.__dict__.keys():
+                gc.allocation_sample_counter = 1
+            else:
+                gc.allocation_sample_counter += 1
+        
+        sample_allocated_bytes = 256
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes   
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+
+        self.gc.gc_set_allocation_sampling(256)
+
+        type_id = self.get_type_id(VAR)
+        size = self.gc.nonlarge_max + 1 # 64
+
+        self.gc.external_malloc(type_id, size, alloc_young=True) # size of reserved obj = 16 + 8 * 64 = 528
+
+        assert self.gc.nursery_top.offset == 240 # 768 - 528
+        assert self.gc.sample_point.offset == 240
+        assert self.gc.real_nursery_top.offset == 512 # this cannot change
+        assert self.gc.allocation_sample_counter == 2
+
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
@@ -1053,6 +1518,15 @@ def random_action_sequences(draw):
     pinned_indexes = []
     ids_taken = {} # identity -> index in ids list
 
+    # To keep track of allocated memory for verifying sampling 
+    size_gc_header = GCHeaderBuilder(lltype.Struct('header', ('tid', lltype.Signed))).size_gc_header
+    node_rawtotalsize = llmemory.raw_malloc_usage(size_gc_header) + 24 # TODO: Replace with calculated value
+    array_header_size = llmemory.raw_malloc_usage(size_gc_header) + 8 # fixed size # TODO: Replace with calculated value
+    string_header_size = llmemory.raw_malloc_usage(size_gc_header) + 17 # var size # TODO: Replace with calculated value
+    weakref_size = llmemory.raw_malloc_usage(size_gc_header) + 8 # fixed size # TODO: Replace with calculated value
+    allocation_sampling_counter = [0]
+    gc_sample_n_bytes = [0]
+
     current_identity = itertools.count(1)
     def next_identity():
         return next(current_identity)
@@ -1203,7 +1677,16 @@ def random_action_sequences(draw):
         identity = next_identity()
         model[identity] = Node(identity, get_obj_identity(previndex), get_obj_identity(nextindex))
         stackroots.append(identity)
-        add_action('malloc', identity, previndex, nextindex)
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += node_rawtotalsize
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+        add_action('malloc', identity, previndex, nextindex, sample_now)
 
     @gen_action("read", Node)
     def read():
@@ -1281,15 +1764,48 @@ def random_action_sequences(draw):
     def malloc_array():
         identity, indexes = create_array()
         stackroots.append(identity)
-        add_action('malloc_array', indexes)
+
+        array_memory_usage = array_header_size + WORD * len(indexes)
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += array_memory_usage
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                # Arrays can be multiple times larger then sample_n_bytes
+                while allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                    allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+        add_action('malloc_array', indexes, sample_now)
 
     @gen_action("malloc_string")
     def malloc_string():
         identity, value = create_string()
         stackroots.append(identity)
-        add_action('malloc_string', value)
 
-    @gen_action("pin", str)
+        # round up (25 b header  + len * size_1b) 
+        string_memory_usage = string_header_size + 1 * len(value) 
+        # Rounding up
+        if string_memory_usage % 8 != 0:
+            string_memory_usage += 8 - string_memory_usage % 8
+
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += string_memory_usage
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                # Strings can be multiple times larger then sample_n_bytes
+                while allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                    allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+        # TODO: Remove, when i am certain, that string size calculation is correct
+        assert string_memory_usage % 8 == 0
+
+        add_action('malloc_string', value, sample_now)
+
+    #@gen_action("pin", str)
     def pin():
         indexes = [index for index, identity in enumerate(stackroots) if isinstance(model[identity], str) and index not in pinned_indexes]
         index = draw(strategies.sampled_from(indexes))
@@ -1321,7 +1837,28 @@ def random_action_sequences(draw):
         ref = Weakref(identity)
         model[new_identity] = ref
         stackroots.append(new_identity)
-        add_action("create_weakref", index)
+
+        # Weakref: 16B fixed ?
+        sample_now = False
+        if gc_sample_n_bytes[0] != 0:
+            # If we exceed a sampling point we need to sample
+            allocation_sampling_counter[0] += weakref_size
+            if allocation_sampling_counter[0] > gc_sample_n_bytes[0]:
+                sample_now = True
+                allocation_sampling_counter[0] -= gc_sample_n_bytes[0]
+
+
+        add_action("create_weakref", index, sample_now)
+    
+    @gen_action("set_gc_sampling_parameter")
+    def set_gc_sampling_parameter():
+        allocation_sampling_counter[0] = 0
+        if draw(strategies.booleans()):
+            gc_sample_n_bytes[0] = draw(strategies.sampled_from([16, 32, 64, 256, 512][::-1]))
+            add_action("set_gc_sampling_parameter", gc_sample_n_bytes[0])
+        else:
+            gc_sample_n_bytes[0] = 0
+            add_action("set_gc_sampling_parameter", 0)
 
     for i in range(draw(strategies.integers(2, 100))):
         # generate steps
@@ -1354,6 +1891,10 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
         self.test_random.im_func.GC_PARAMS = GC_PARAMS
         self.setup_method(self.test_random.im_func)
         self.gc.TEST_VISIT_SINGLE_STEP = random_data['visit_single_step']
+        def _allocation_sample_now(gc_instance):
+            self.allocation_sample_happend = True
+        self.gc._vmprof_allocation_sample_now = _allocation_sample_now
+        self.allocation_sample_happend = False
         self.gc.DEBUG = random_data['debug_level']
         self.make_prebuilts(random_data)
         self.pinned_strings = []
@@ -1476,8 +2017,10 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 obj = self.unerase_str(obj)
                 assert "".join(obj.chars) == actiondata[1]
 
+    @settings(verbosity=Verbosity.verbose, print_blob=True, phases=[Phase.explicit, Phase.reuse, Phase.generate])
     @given(random_action_sequences())
     def test_random(self, random_data):
+        sampling_active = [False]
         from rpython.rlib import rgc
         self.state_setup(random_data)
         for action in random_data['actions']:
@@ -1488,8 +2031,11 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 index, = actiondata
                 del self.stackroots[index]
             elif kind == "malloc": # alloc
-                identity, previd, nextid = actiondata
+                identity, previd, nextid, expect_sample = actiondata
                 p = self.malloc(self.NODE)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
                 p.x = identity
                 self.write(p, 'prev', self.erase(self.get_obj(previd)))
                 self.write(p, 'next', self.erase(self.get_obj(nextid)))
@@ -1532,13 +2078,21 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                     dest_start += 1
                     source_start += 1
             elif kind == "malloc_array":
-                content, = actiondata
+                content, expect_sample = actiondata
                 array = self.create_array(content)
                 self.stackroots.append(array)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
+         
             elif kind == "malloc_string":
-                content, = actiondata
+                content, expect_sample = actiondata
                 array = self.create_string(content)
                 self.stackroots.append(array)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
+
             elif kind == "pin":
                 index, = actiondata
                 ptr = self.stackroots[index]
@@ -1565,12 +2119,20 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 else:
                     assert self.computed_ids[compare_with] == int_id
             elif kind == "create_weakref":
-                index, = actiondata
+                index, expect_sample = actiondata
                 ref = self.malloc(WEAKREF)
+                if sampling_active[0]:
+                    assert self.allocation_sample_happend == expect_sample
+                    self.allocation_sample_happend = False
                 # must read node *after* malloc, in case malloc collects and moves
                 node = self.get_obj(index)
                 ref.weakptr = llmemory.cast_ptr_to_adr(node)
                 self.stackroots.append(ref)
+            elif kind == "set_gc_sampling_parameter":
+                sample_n_bytes, = actiondata
+                self.gc._get_first_sample_offset = lambda: sample_n_bytes
+                self.gc.gc_set_allocation_sampling(sample_n_bytes)
+                sampling_active[0] = sample_n_bytes != 0
             else:
                 assert 0, "unreachable"
             checking_actions = action[-1]

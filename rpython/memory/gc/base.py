@@ -498,6 +498,9 @@ class GCBase(object):
                 self.call_destructor(obj)
         finally:
             self.finalizer_lock = False
+    
+    def after_fork(self, result_of_fork):
+        pass
 
 
 class MovingGCBase(GCBase):

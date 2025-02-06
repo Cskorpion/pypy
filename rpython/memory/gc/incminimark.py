@@ -75,6 +75,9 @@ from rpython.rlib.debug import ll_assert, debug_print, debug_start, debug_stop
 from rpython.rlib.objectmodel import specialize, always_inline, we_are_translated
 from rpython.rlib import rgc, unroll
 from rpython.memory.gc.minimarkpage import out_of_memory
+from rpython.rlib.rvmprof.rvmprof import _get_vmprof
+from rpython.rtyper.lltypesystem.llarena import ArenaError
+from rpython.rlib.rrandom import Pcg32nogcRandom
 
 #
 # Handles the objects in 2 generations:
@@ -370,6 +373,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.size_objects_made_old = r_uint(0)
         self.threshold_objects_made_old = r_uint(0)
 
+        # Initially disable gc-sampling
+        self.sample_point = llmemory.NULL
+        self.initial_max_number_of_pinned_objects = 0
+        self._disable_gc_sampling()
+        self.pcg = Pcg32nogcRandom()
 
     def setup(self):
         """Called at run-time to initialize the GC."""
@@ -526,6 +534,52 @@ class IncrementalMiniMarkGC(MovingGCBase):
             # Estimate this number conservatively
             bigobj = self.nonlarge_max + 1
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
+        self.initial_max_number_of_pinned_objects = self.max_number_of_pinned_objects
+        self.pcg.seed_from_time()
+    
+    def _disable_gc_sampling(self):
+        if self.sample_point != llmemory.NULL:
+            self.nursery_top = self.real_nursery_top
+        self.sample_allocated_bytes = 0
+        # Sampling disabled => Pinning enabled
+        self.max_number_of_pinned_objects = self.initial_max_number_of_pinned_objects
+        self.real_nursery_top = self.nursery_top
+        self.sample_point = llmemory.NULL
+
+    def gc_set_allocation_sampling(self, sample_n_bytes=1024):
+        self.vmp_cintf = _get_vmprof().cintf
+        # if sampling was already enabled, we disable it and try to reenable it with the new sampling_rate
+        self._disable_gc_sampling()
+        if sample_n_bytes == 0:
+            return True
+        assert sample_n_bytes % WORD == 0, "Sampling size must be word aligned"
+        self.max_number_of_pinned_objects = 0 # No new pinned objs from now on
+        self.sample_allocated_bytes = sample_n_bytes
+        # Activate sampling only if there are no pinned objects in nursery,
+        # else wait for pinned objs in nursery to be gone after collection
+        if self.pinned_objects_in_nursery == 0:
+            first_sample = self._get_first_sample_offset()
+            self.sample_point = self._bump_pointer(self.nursery_free, first_sample)
+            self._set_nursery_top_for_sampling()
+        return True
+    
+    def _get_first_sample_offset(self):
+        return intmask(self.pcg.randbelow(self.sample_allocated_bytes)) & ~((1 << WORD) - 1)
+    
+    def _set_nursery_top_for_sampling(self):
+        self.real_nursery_top = self.nursery_top # save 'real' nursery top
+        if self.sample_point <= self.nursery_top:
+            self.nursery_top = self.sample_point # set nursery to first sampling point
+    
+    def after_fork(self, result_of_fork):
+        if result_of_fork == 0:
+            # If we are a child process, we must not sample
+            self._disable_gc_sampling()
+
+    # vmprof cintf access only in this func, to make tests simpler
+    def _vmprof_allocation_sample_now(self, gc):
+        self.vmp_cintf.vmprof_sample_stack_now_gc_triggered()
+
 
     def enable(self):
         self.enabled = True
@@ -556,8 +610,12 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.nursery = self._alloc_nursery()
         # the current position in the nursery:
         self.nursery_free = self.nursery
+        # For allocation based profiling with VMProf
+        assert self.sample_point == llmemory.NULL, "initially gc sampling must be disabled"
         # the end of the nursery:
         self.nursery_top = self.nursery + self.nursery_size
+        self.real_nursery_top = self.nursery_top
+
         # initialize the threshold
         self.min_heap_size = max(self.min_heap_size, self.nursery_size *
                                               self.major_collection_threshold)
@@ -710,7 +768,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
             toobig = r_uint(maxsize // raw_malloc_usage(itemsize)) + 1
         else:
             toobig = r_uint(sys.maxint) + 1
-
         if r_uint(length) >= r_uint(toobig):
             #
             # If the total size of the object would be larger than
@@ -871,10 +928,45 @@ class IncrementalMiniMarkGC(MovingGCBase):
         """
 
         minor_collection_count = 0
+
+        collection_occured = False
+
         while True:
+            last_nursery_free = self.nursery_free # for returning after sampling
             self.nursery_free = llmemory.NULL      # debug: don't use me
             # note: no "raise MemoryError" between here and the next time
             # we initialize nursery_free!
+
+            # Allocation triggered profiling with VMProf
+            if self.nursery_top == self.sample_point:# sample_point == llmemory.NULL if sampling disabled, or 'paused' due to pinned objs
+
+                #assert self.pinned_objects_in_nursery == 0, "no pinned objects allowed yet"
+
+                while True:
+                    self._vmprof_allocation_sample_now(self)
+
+                    self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
+                    if collection_occured:
+                        if self.sample_point >= self._bump_pointer(last_nursery_free, totalsize):
+                            break
+                    elif self.sample_point >= last_nursery_free:
+                        break
+                    
+                if self.sample_point > self.real_nursery_top:
+                    self.nursery_top = self.real_nursery_top
+                else:
+                    self.nursery_top = self.sample_point
+                
+                if collection_occured:
+                    # After Collection nursery_free and last_nursery_free dont have totalsize added
+                    new_free = self._bump_pointer(last_nursery_free, totalsize) 
+                else:    
+                    new_free = last_nursery_free
+
+                if new_free <= self.nursery_top:
+                    self.nursery_free = new_free
+                    result = new_free - totalsize
+                    break       
 
             if self.nursery_barriers.non_empty():
                 # Pinned object in front of nursery_top. Try reserving totalsize
@@ -908,9 +1000,14 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 # update used nursery space to allocate objects
                 self.nursery_free = self.nursery_top + pinned_obj_size
                 self.nursery_top = self.nursery_barriers.popleft()
+
             else:
+                collection_occured = True
                 minor_collection_count += 1
                 if minor_collection_count == 1:
+                    # set nursery_free to the previous value for the sampling
+                    # logic in _minor_collection, not so nice
+                    self.nursery_free = last_nursery_free - totalsize
                     self.minor_collection_with_major_progress()
                 else:
                     # Nursery too full again.  This is likely because of
@@ -947,6 +1044,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             if self.nursery_top - self.nursery_free > self.debug_tiny_nursery:
                 self.nursery_free = self.nursery_top - self.debug_tiny_nursery
         #
+
         return result
     collect_and_reserve._dont_inline_ = True
 
@@ -1085,6 +1183,23 @@ class IncrementalMiniMarkGC(MovingGCBase):
         if self.is_varsize(typeid):
             offset_to_length = self.varsize_offset_to_length(typeid)
             (result + size_gc_header + offset_to_length).signed[0] = length
+        #
+        # Allocation based sampling with VMProf
+        if self.sample_point != llmemory.NULL:
+            size_to_sample = raw_malloc_usage(totalsize)
+            
+            # Sample while exceeding the sample point
+            while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
+                self._vmprof_allocation_sample_now(self)
+                self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
+            
+            # Substract obj size from sample point to account for non-sampled leftover
+            self.sample_point -= size_to_sample
+
+            # set nursery top to sample point if it fits into the nursery
+            #self._set_nursery_top_for_sampling()
+            if self.sample_point <= self.real_nursery_top:
+                self.nursery_top = self.sample_point # set nursery to sampling point
         return result + size_gc_header
 
 
@@ -1768,6 +1883,11 @@ class IncrementalMiniMarkGC(MovingGCBase):
         #
         start = time.time()
         debug_start("gc-minor")
+        if self.sample_point != llmemory.NULL:
+            self.sample_point -= self.nursery_free - self.nursery
+            # TODO: Is it ok if sample_point is < nursery ?
+        self.nursery_free = llmemory.NULL      # debug: don't use me
+        
         #
         # All nursery barriers are invalid from this point on.  They
         # are evaluated anew as part of the minor collection.
@@ -1945,7 +2065,20 @@ class IncrementalMiniMarkGC(MovingGCBase):
         #
         self.nursery_free = self.nursery
         self.nursery_top = self.nursery_barriers.popleft()
-        #
+
+        # Allocation sampling with VMProf
+        if self.sample_point != llmemory.NULL:
+            # Case: Allocation sampling is enabled
+            self._set_nursery_top_for_sampling()
+        elif self.pinned_objects_in_nursery == 0 and self.sample_allocated_bytes != 0:
+            # Case: Allocation sampling is enabled, but did not 'start' yet due to pinned objs in nursery
+            self.sample_point = self._bump_pointer(self.nursery_free, self.sample_allocated_bytes)
+            # Sampling will start now
+            self._set_nursery_top_for_sampling()
+        #else:
+            # Case: Allocation sampling disabled, or enabled but cannot 'start' due to pinned objs in nursery
+            #pass
+
         # clear GCFLAG_PINNED_OBJECT_PARENT_KNOWN from all parents in the list.
         self.old_objects_pointing_to_pinned.foreach(
                 self._reset_flag_old_objects_pointing_to_pinned, None)

@@ -19,6 +19,7 @@
 #define MARKER_TIME_N_ZONE '\x06'
 #define MARKER_META '\x07'
 #define MARKER_NATIVE_SYMBOLS '\x08'
+#define MARKER_GC_STACKTRACE '\x09'
 
 #define VERSION_BASE '\x00'
 #define VERSION_THREAD_ID '\x01'
@@ -27,6 +28,7 @@
 #define VERSION_MODE_AWARE '\x04'
 #define VERSION_DURATION '\x05'
 #define VERSION_TIMESTAMP '\x06'
+#define VERSION_SAMPLE_TIMEOFFSET '\x07'
 
 #define PROFILE_MEMORY '\x01'
 #define PROFILE_LINES  '\x02'

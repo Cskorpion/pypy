@@ -599,7 +599,8 @@ def _start_of_page_untranslated(addr, page_size):
     shift = WORD  # for testing, we assume that the whole arena is not
                   # on a page boundary
     ofs = ((addr.offset - shift) // page_size) * page_size + shift
-    return llarena.fakearenaaddress(addr.arena, ofs)
+    # Need Arenas that can exceed their range for allocation sampling with VMProf
+    return llarena.fakearenaaddress(addr.arena, ofs, addr.in_range)
 
 def _dummy_size(size):
     if we_are_translated():

@@ -71,12 +71,21 @@ typedef struct prof_stacktrace_s {
     char padding[sizeof(long) - 1];
 #endif
     char marker;
-    long count, depth;
+#ifdef VMPROF_WINDOWS
+    long count;
+#else
+    double sample_offset; // +4 Byte disk space used per sample
+#endif
+    long depth;
     void *stack[];
 } prof_stacktrace_s;
 
+#ifdef VMPROF_UNIX
+double vmp_get_time();
+#define SIZEOF_PROF_STACKTRACE sizeof(double)+sizeof(long)+sizeof(char)
+#else
 #define SIZEOF_PROF_STACKTRACE sizeof(long)+sizeof(long)+sizeof(char)
-
+#endif
 RPY_EXTERN
 char *vmprof_init(int fd, double interval, int memory,
                   int proflines, const char *interp_name, int native, int real_time);
