@@ -376,7 +376,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         # Initially disable gc-sampling
         self.sample_point = llmemory.NULL
         self.initial_max_number_of_pinned_objects = 0
-        self._disable_gc_sampling()
+        self._reset_sampling_pointers()
         self.pcg = Pcg32nogcRandom()
         self.young_sampled_objects = self.AddressStack()
 
@@ -537,8 +537,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.max_number_of_pinned_objects = self.nursery_size / (bigobj * 2)
         self.initial_max_number_of_pinned_objects = self.max_number_of_pinned_objects
         self.pcg.seed_from_time()
-    
-    def _disable_gc_sampling(self):
+
+    def _reset_sampling_pointers(self):
         if self.sample_point != llmemory.NULL:
             self.nursery_top = self.real_nursery_top
         self.sample_allocated_bytes = 0
@@ -547,10 +547,18 @@ class IncrementalMiniMarkGC(MovingGCBase):
         self.real_nursery_top = self.nursery_top
         self.sample_point = llmemory.NULL
 
+    
+    def _disable_gc_sampling(self):
+        # Trigger a minor collection to gather remaining obj types and dump them
+        self._minor_collection()
+        # moved out into seperate function, to not trigger a minor collection on enabling gc sampling
+        self._reset_sampling_pointers()
+        
+
     def gc_set_allocation_sampling(self, sample_n_bytes=16384):
         self.vmp_cintf = _get_vmprof().cintf
         # if sampling was already enabled, we disable it and try to reenable it with the new sampling_rate
-        self._disable_gc_sampling()
+        self._reset_sampling_pointers()
         if sample_n_bytes == 0:
             return True
         assert sample_n_bytes % WORD == 0, "Sampling size must be word aligned"
@@ -581,7 +589,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
     def _vmprof_allocation_sample_now(self, gc):
         self.vmp_cintf.vmprof_sample_stack_now_gc_triggered()
 
-    # report surviving objects and their type to vmprof
+     # report surviving objects and their type to vmprof
     _LONG_ARRAY = lltype.Array(lltype.Signed, hints={'nolength':True})
     def _vmprof_report_minor_gc(self, start_time):
         array_size = self.young_sampled_objects.length()
@@ -591,15 +599,19 @@ class IncrementalMiniMarkGC(MovingGCBase):
         size_gc_header = self.size_gc_header()
         while self.young_sampled_objects.non_empty():
             addr = self.young_sampled_objects.pop() + size_gc_header
-            assert self.is_in_nursery(addr)
-            survived = self.is_forwarded(addr)
+            if self.is_in_nursery(addr):
+                survived = self.is_forwarded(addr)
 
-            if survived:
-                addr = self.get_forwarding_address(addr)
+                if survived:
+                    addr = self.get_forwarding_address(addr)
+
+            else:
+                survived = intmask(self.get_type_id(addr)) & GCFLAG_VISITED_RMY
 
             typeid = self.get_member_index(self.get_type_id(addr))
-            array[index] = (typeid << 1) | survived
+            array[index] = (typeid << 1) | intmask(survived)
             index += 1
+
         
         self._cintf_vmprof_report_minor_gc(start_time, array, array_size)
         lltype.free(array, flavor='raw')
@@ -1226,6 +1238,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             while self._bump_pointer(self.nursery_free, size_to_sample) > self.sample_point:
                 self._vmprof_allocation_sample_now(self)
                 self.sample_point = self._bump_pointer(self.sample_point, self.sample_allocated_bytes)
+                self.young_sampled_objects.append(result)
             
             # Substract obj size from sample point to account for non-sampled leftover
             self.sample_point -= size_to_sample
@@ -2040,15 +2053,15 @@ class IncrementalMiniMarkGC(MovingGCBase):
         # visit the P and O lists from rawrefcount, if enabled.
         if self.rrc_enabled:
             self.rrc_minor_collection_free()
+        #            
+        # report surviving objects and their type to vmprof    
+        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
+            self._vmprof_report_minor_gc(start)
         #
         # Walk the list of young raw-malloced objects, and either free
         # them or make them old.
         if self.young_rawmalloced_objects:
             self.free_young_rawmalloced_objects()
-        #            
-        # report surviving objects and their type to vmprof    
-        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
-            self._vmprof_report_minor_gc(start)
         #
         # All live nursery objects are out of the nursery or pinned inside
         # the nursery.  Create nursery barriers to protect the pinned objects,
