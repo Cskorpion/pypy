@@ -1181,7 +1181,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         def dummy_trigger_func(gc):
             events.append("sample")
 
-        def dummy_report_func(start_time, array, array_size):
+        def dummy_report_func(array, array_size):
             events.append([array[i] for i in range(array_size)])
         
         sample_allocated_bytes = 128
@@ -1200,7 +1200,39 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         self.gc._minor_collection()
 
-        assert events == ["sample", "sample", [3, 2]]
+        assert events == ["sample", "sample", [5, 4]]
+
+    def test_vmprof_external_malloc_report_minor_gc(self):
+        events = []
+        
+        # Set dummy vmprof trigger function & activate sampling
+        def dummy_trigger_func(gc):
+            events.append("sample")
+
+        def dummy_report_func(array, array_size):
+            events.append([array[i] for i in range(array_size)])
+        
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._cintf_vmprof_report_minor_gc = dummy_report_func
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        # Allocate 5 times = 160
+        for _ in range(5):
+            self.malloc(S)
+
+        # Allocate 5 more times, and these objects survive
+        for _ in range(5):
+            self.stackroots.append(self.malloc(S))
+
+        type_id = self.get_type_id(VAR)
+
+        self.gc.external_malloc(type_id, 16, alloc_young=True) # size of reserved obj = 16 + 8 * 16 = 144
+
+        self.gc._minor_collection()
+
+        assert events == ["sample", "sample", "sample", [0b1010, 0b101, 0b100]] # type_id << 2, external_malloc, survived
 
     def test_vmprof_bug_obj_info_recorded_after_minor(self):
         events = []
@@ -1209,7 +1241,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
         def dummy_trigger_func(gc):
             events.append("sample")
 
-        def dummy_report_func(start_time, array, array_size):
+        def dummy_report_func(array, array_size):
             pass
         
         sample_allocated_bytes = 128
@@ -2083,6 +2115,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 obj = self.unerase_str(obj)
                 assert "".join(obj.chars) == actiondata[1]
 
+    @reproduce_failure('4.39.3', 'AXicFY8vaNVRHMXP936/33vv7/4N7rk938M5VhSdK1YFEQRRy7C4lYWVB4JYNra1CQo+DII4bIaJxSCaDDaLgsEVMRkG6yIIGxO8Cyeccs7nQwCyJyJusU6YjTq2FlV5MgdEk0tk8l1wIYJYknUciwappovRZ4IaSqwyHJjWsp0+UVItIWou4FARNRRfnUZJgauBtSlAYgJnn818Tp6W/12boeo1kQoZTeho9vrrc2s373zd3/n8cY1e3N18e3j06sv3dx8WLz+5/3z36vjb3Jb59QylBJ8QusjKvdAA3TDBkcGxCJvCNRU/aBRRAX/aZjK+hESI/YGoFScdvby1sH5wb/vn3tLC4/H+3ujB6Mqji0NnBSTHevCnrHeQzkeL6Snb0dLDid2nP37Pvd+4fXZ7tHrh76Ub5z/9WV95c6Y2B1jThzMCJog4tA2SSaYKdWJjdayUG87USShC7FXfp4mqyFw9GmBPXDul1N6T/gcvOzfa')
     @settings(verbosity=Verbosity.verbose, print_blob=True, phases=[Phase.explicit, Phase.reuse, Phase.generate])
     @given(random_action_sequences())
     def test_random(self, random_data):

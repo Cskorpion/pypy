@@ -35,5 +35,5 @@ class DummyVMProf(object):
     def stop_sampling(self):
         return -1
     
-    def vmprof_report_minor_gc_objs(self, time, array, array_size):
+    def vmprof_report_minor_gc_objs(self, array, array_size):
         pass

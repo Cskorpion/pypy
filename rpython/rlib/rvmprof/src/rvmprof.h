@@ -32,7 +32,7 @@ RPY_EXTERN void vmprof_ignore_signals(int);
 RPY_EXTERN int vmprof_enable(int memory, int native, int real_time);
 RPY_EXTERN int vmprof_disable(void);
 RPY_EXTERN int vmprof_sample_stack_now_gc_triggered(void);
-RPY_EXTERN int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int array_size);
+RPY_EXTERN int vmprof_report_minor_gc_objs(intptr_t * array_ptr, int array_size);
 RPY_EXTERN int vmprof_register_virtual_function(char *, intptr_t, int);
 RPY_EXTERN void* vmprof_stack_new(void);
 RPY_EXTERN int vmprof_stack_append(void*, long);

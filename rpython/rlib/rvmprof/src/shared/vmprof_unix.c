@@ -131,7 +131,7 @@ int vmprof_sample_stack_now_gc_triggered(void) {
     return 1;
 }
 
-int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int array_size) {
+int vmprof_report_minor_gc_objs(intptr_t * array_ptr, int array_size) {
     /* This function will be called from PyPy's GC.
        Saves info on which objs were collected or tenured after a minor collection */
 
@@ -153,7 +153,7 @@ int vmprof_report_minor_gc_objs(double time_start, intptr_t * array_ptr, int arr
     // dont create new struct for obj info, just use prof stacktrace with new marker
     struct prof_stacktrace_s *st = (struct prof_stacktrace_s *)p->data;
     st->marker = marker;
-    st->sample_offset = time_start;
+    st->sample_offset = vmp_get_time();
     st->depth = array_size;
 
     for(int i=0; i < array_size; i++) {

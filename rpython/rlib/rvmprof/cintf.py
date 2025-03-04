@@ -161,7 +161,7 @@ def setup():
                                             lltype.Void, compilation_info=eci,
                                             _nowrapper=True)
     
-    vmprof_report_minor_gc_objs = rffi.llexternal("vmprof_report_minor_gc_objs", [rffi.DOUBLE, rffi.SIGNEDP, rffi.SIGNED],
+    vmprof_report_minor_gc_objs = rffi.llexternal("vmprof_report_minor_gc_objs", [rffi.SIGNEDP, rffi.SIGNED],
                                             rffi.INT, compilation_info=eci,
                                             _nowrapper=True)
 

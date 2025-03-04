@@ -591,9 +591,9 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
      # report surviving objects and their type to vmprof
     _LONG_ARRAY = lltype.Array(lltype.Signed, hints={'nolength':True})
-    def _vmprof_report_minor_gc(self, start_time):
+    def _vmprof_report_minor_gc(self):
         array_size = self.young_sampled_objects.length()
-        array = lltype.malloc(self._LONG_ARRAY, array_size, flavor='raw')
+        t_array = lltype.malloc(self._LONG_ARRAY, array_size, flavor='raw')
 
         index = 0
         size_gc_header = self.size_gc_header()
@@ -604,20 +604,23 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
                 if survived:
                     addr = self.get_forwarding_address(addr)
+                external_malloc = 0
 
             else:
-                survived = intmask(self.get_type_id(addr)) & GCFLAG_VISITED_RMY
+                survived = bool(self.header(addr).tid & GCFLAG_VISITED_RMY)
+                #survived = intmask(self.get_type_id(addr)) & GCFLAG_VISITED_RMY
+                external_malloc = 2
 
             typeid = self.get_member_index(self.get_type_id(addr))
-            array[index] = (typeid << 1) | intmask(survived)
+            t_array[index] = (typeid << 2) | external_malloc | intmask(survived)
             index += 1
 
         
-        self._cintf_vmprof_report_minor_gc(start_time, array, array_size)
-        lltype.free(array, flavor='raw')
+        self._cintf_vmprof_report_minor_gc(t_array, array_size)
+        lltype.free(t_array, flavor='raw')
 
-    def _cintf_vmprof_report_minor_gc(self, start_time, array, array_size):
-        self.vmp_cintf.vmprof_report_minor_gc_objs(start_time, array, array_size)
+    def _cintf_vmprof_report_minor_gc(self, t_array, array_size):
+        self.vmp_cintf.vmprof_report_minor_gc_objs(t_array, array_size)
 
 
     def enable(self):
@@ -2056,7 +2059,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
         #            
         # report surviving objects and their type to vmprof    
         if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
-            self._vmprof_report_minor_gc(start)
+            self._vmprof_report_minor_gc()
         #
         # Walk the list of young raw-malloced objects, and either free
         # them or make them old.
