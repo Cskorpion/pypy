@@ -1264,6 +1264,31 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         assert self.gc.young_sampled_objects.length() == 1
 
+    def test_vmprof_minor_after_disable_via_set(self):
+        events = []
+        
+        # Set dummy vmprof trigger functions & activate sampling
+        def dummy_trigger_func(gc):
+            events.append("sample")
+
+        def dummy_report_func(array, array_size):
+            events.append(("object info",array_size))
+        
+        sample_allocated_bytes = 128
+        self.gc._get_first_sample_offset = lambda: sample_allocated_bytes        
+        self.gc._vmprof_allocation_sample_now = dummy_trigger_func
+        self.gc._cintf_vmprof_report_minor_gc = dummy_report_func
+        self.gc.gc_set_allocation_sampling(sample_allocated_bytes)
+
+        for _ in range(15):# nursery_free: 0 => 480
+            self.malloc(S)
+
+        assert events == ["sample", "sample", "sample"]
+
+        self.gc.gc_set_allocation_sampling(-1)# little hack to disable correctly => replace with _disable at some point
+
+        assert events == ["sample", "sample", "sample", ("object info", 3)]
+
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
 
@@ -1992,7 +2017,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
             self.allocation_sample_happend = True
         self.gc._vmprof_allocation_sample_now = _allocation_sample_now
         self.allocation_sample_happend = False
-        self.gc._cintf_vmprof_report_minor_gc = lambda start_time, array, array_size : None
+        self.gc._cintf_vmprof_report_minor_gc = lambda array, array_size : None
         self.gc.DEBUG = random_data['debug_level']
         self.make_prebuilts(random_data)
         self.pinned_strings = []
@@ -2114,8 +2139,7 @@ class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
                 assert actiondata[0] == "str"
                 obj = self.unerase_str(obj)
                 assert "".join(obj.chars) == actiondata[1]
-
-    @reproduce_failure('4.39.3', 'AXicFY8vaNVRHMXP936/33vv7/4N7rk938M5VhSdK1YFEQRRy7C4lYWVB4JYNra1CQo+DII4bIaJxSCaDDaLgsEVMRkG6yIIGxO8Cyeccs7nQwCyJyJusU6YjTq2FlV5MgdEk0tk8l1wIYJYknUciwappovRZ4IaSqwyHJjWsp0+UVItIWou4FARNRRfnUZJgauBtSlAYgJnn818Tp6W/12boeo1kQoZTeho9vrrc2s373zd3/n8cY1e3N18e3j06sv3dx8WLz+5/3z36vjb3Jb59QylBJ8QusjKvdAA3TDBkcGxCJvCNRU/aBRRAX/aZjK+hESI/YGoFScdvby1sH5wb/vn3tLC4/H+3ujB6Mqji0NnBSTHevCnrHeQzkeL6Snb0dLDid2nP37Pvd+4fXZ7tHrh76Ub5z/9WV95c6Y2B1jThzMCJog4tA2SSaYKdWJjdayUG87USShC7FXfp4mqyFw9GmBPXDul1N6T/gcvOzfa')
+    
     @settings(verbosity=Verbosity.verbose, print_blob=True, phases=[Phase.explicit, Phase.reuse, Phase.generate])
     @given(random_action_sequences())
     def test_random(self, random_data):

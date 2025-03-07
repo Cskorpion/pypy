@@ -23,6 +23,8 @@ VMPROF_JITTED_TAG = 3
 VMPROF_JITTING_TAG = 4
 VMPROF_GC_TAG = 5
 
+GC_STATS_NAMES = ["total_memory_used"]
+
 class VMProfError(Exception):
     msg = ''   # annotation hack
     def __init__(self, msg):
@@ -205,7 +207,7 @@ class VMProf(object):
         
         if self.sample_n_bytes != 0:
             set_alloc_sampling = self.gc_set_allocation_sampling
-            set_alloc_sampling(0)
+            set_alloc_sampling(-1)# triggers minor collection & disables sampling
         self.is_enabled = False
         res = self.cintf.vmprof_disable()
         if res < 0:
@@ -226,7 +228,7 @@ class VMProf(object):
         """
         if self.sample_n_bytes != 0:
             set_alloc_sampling = self.gc_set_allocation_sampling
-            set_alloc_sampling(0)
+            set_alloc_sampling(-1) # triggers minor collection & disables sampling
 
         fd = self.cintf.vmprof_stop_sampling()
         return rffi.cast(lltype.Signed, fd)

@@ -558,8 +558,12 @@ class IncrementalMiniMarkGC(MovingGCBase):
     def gc_set_allocation_sampling(self, sample_n_bytes=16384):
         self.vmp_cintf = _get_vmprof().cintf
         # if sampling was already enabled, we disable it and try to reenable it with the new sampling_rate
+        if sample_n_bytes == -1:
+            self._disable_gc_sampling()
+            return True
         self._reset_sampling_pointers()
         if sample_n_bytes == 0:
+            while self.young_sampled_objects.non_empty(): self.young_sampled_objects.pop()
             return True
         assert sample_n_bytes % WORD == 0, "Sampling size must be word aligned"
         self.max_number_of_pinned_objects = 0 # No new pinned objs from now on
@@ -615,7 +619,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             t_array[index] = (typeid << 2) | external_malloc | intmask(survived)
             index += 1
 
-        
+        total_memory_used = self.get_total_memory_used()
         self._cintf_vmprof_report_minor_gc(t_array, array_size)
         lltype.free(t_array, flavor='raw')
 
@@ -1012,6 +1016,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                     result = new_free - totalsize
                     for _ in range(num_samples):
                         self.young_sampled_objects.append(result)
+                    num_samples = 0
                     break       
 
             if self.nursery_barriers.non_empty():
@@ -1085,6 +1090,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
                 # Case: Allocation sampled in sampling loop, but obj did not fit into nursery => no obj info recorded so far => do it now
                 for _ in range(num_samples):
                     self.young_sampled_objects.append(result)
+                num_samples = 0
                 ll_assert(self.nursery_free <= self.nursery_top, "nursery overflow")
                 break
             #
@@ -1093,7 +1099,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             if self.nursery_top - self.nursery_free > self.debug_tiny_nursery:
                 self.nursery_free = self.nursery_top - self.debug_tiny_nursery
         #
-
+        ll_assert(num_samples == 0, "not enough objects recorded in collect_and_reseerve")
         return result
     collect_and_reserve._dont_inline_ = True
 
@@ -2058,7 +2064,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
             self.rrc_minor_collection_free()
         #            
         # report surviving objects and their type to vmprof    
-        if self.young_sampled_objects.non_empty() and self.sample_point != llmemory.NULL:
+        if self.sample_point != llmemory.NULL and self.young_sampled_objects.non_empty():
             self._vmprof_report_minor_gc()
         #
         # Walk the list of young raw-malloced objects, and either free
