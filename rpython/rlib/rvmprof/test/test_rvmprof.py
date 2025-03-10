@@ -104,6 +104,7 @@ class RVMProfSamplingTest(RVMProfTest):
         rvmprof.register_code(code, self.MyCode.get_name)
         fd = os.open(self.tmpfilename, os.O_WRONLY | os.O_CREAT, 0666)
         rvmprof.enable(fd, self.SAMPLING_INTERVAL, memory=memory)
+        rvmprof.write_meta("SomeKey", "SomeValue")# for testing metadata writing from rvmprof
         start = time.time()
         res = 0
         while time.time() < start+delta_t:
@@ -146,6 +147,14 @@ class TestEnable(RVMProfSamplingTest):
         prof = read_profile(self.tmpfilename)
         assert prof.profile_memory
         assert all(p[-1] > 0 for p in prof.profiles)
+
+    def test_write_meta(self):
+        """ Test if writing metadata to profile via rvmprof works """
+        from vmprof import read_profile
+        self.rpy_entry_point(10**4, 0.5, 0)
+        assert self.tmpfile.check()
+        prof = read_profile(self.tmpfilename)
+        assert prof.getmeta("SomeKey", "") == "SomeValue"
 
 
 class TestNative(RVMProfSamplingTest):
