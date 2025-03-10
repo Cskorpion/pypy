@@ -41,6 +41,9 @@ def enable_allocation_triggered(fileno, sample_n_bytes=1024, interval=0.0, nativ
 def get_supported_gc_stats():
     return _get_vmprof().get_supported_gc_stats()
 
+def write_meta(key, value):
+    _get_vmprof().write_meta(key, value)
+
 # For testing
 def sample_stack_now():
     _get_vmprof().sample_stack_now()

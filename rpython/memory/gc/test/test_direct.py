@@ -1200,7 +1200,8 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         self.gc._minor_collection()
 
-        assert events == ["sample", "sample", [5, 4]]
+        assert events[:2] == ["sample", "sample"]
+        assert events[2][:2] == [5, 4] #TODO: think about gc stats and assert them to
 
     def test_vmprof_external_malloc_report_minor_gc(self):
         events = []
@@ -1232,7 +1233,9 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         self.gc._minor_collection()
 
-        assert events == ["sample", "sample", "sample", [0b1010, 0b101, 0b100]] # type_id << 2, external_malloc, survived
+        #TODO: think about gc stats and assert them to
+        assert events[:3] == ["sample", "sample", "sample"]
+        assert events[3][:3] ==  [0b1010, 0b101, 0b100]# type_id << 2, external_malloc, survived
 
     def test_vmprof_bug_obj_info_recorded_after_minor(self):
         events = []
@@ -1287,7 +1290,7 @@ class TestIncrementalMiniMarkGCVMProf(BaseDirectGCTest):
 
         self.gc.gc_set_allocation_sampling(-1)# little hack to disable correctly => replace with _disable at some point
 
-        assert events == ["sample", "sample", "sample", ("object info", 3)]
+        assert events == ["sample", "sample", "sample", ("object info", 6)]
 
 class TestIncrementalMiniMarkGCFull(DirectGCTest):
     from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass

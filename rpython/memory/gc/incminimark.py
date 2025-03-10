@@ -596,7 +596,7 @@ class IncrementalMiniMarkGC(MovingGCBase):
      # report surviving objects and their type to vmprof
     _LONG_ARRAY = lltype.Array(lltype.Signed, hints={'nolength':True})
     def _vmprof_report_minor_gc(self):
-        array_size = self.young_sampled_objects.length()
+        array_size = self.young_sampled_objects.length() + 3
         t_array = lltype.malloc(self._LONG_ARRAY, array_size, flavor='raw')
 
         index = 0
@@ -612,14 +612,17 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
             else:
                 survived = bool(self.header(addr).tid & GCFLAG_VISITED_RMY)
-                #survived = intmask(self.get_type_id(addr)) & GCFLAG_VISITED_RMY
                 external_malloc = 2
 
             typeid = self.get_member_index(self.get_type_id(addr))
             t_array[index] = (typeid << 2) | external_malloc | intmask(survived)
             index += 1
 
-        total_memory_used = self.get_total_memory_used()
+        # The type and ammount of stats passed to vmprof must be in sync with GC_STATS_NAMES in rvmprof.py
+        t_array[index] = intmask(self.get_total_memory_used()) 
+        t_array[index + 1] = intmask(self.ac.arena_size * self.ac.arenas_count)
+        t_array[index + 2] = intmask(self.gc_state)
+
         self._cintf_vmprof_report_minor_gc(t_array, array_size)
         lltype.free(t_array, flavor='raw')
 
