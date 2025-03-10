@@ -23,7 +23,7 @@ VMPROF_JITTED_TAG = 3
 VMPROF_JITTING_TAG = 4
 VMPROF_GC_TAG = 5
 
-GC_STATS_NAMES = ["total_memory_used"]
+GC_STATS_NAMES = ['total_memory_used', 'total_size_of_arenas', 'gc_state']
 
 class VMProfError(Exception):
     msg = ''   # annotation hack
@@ -193,6 +193,16 @@ class VMProf(object):
         self.is_enabled = True
 
     @jit.dont_look_inside
+    def write_meta(self, key, value):
+        c_key = rffi.str2constcharp(key)
+        c_value = rffi.str2constcharp(value)
+        self.cintf.vmprof_write_meta(c_key, c_value)
+    
+    @jit.dont_look_inside
+    def get_supported_gc_stats(self):
+        return GC_STATS_NAMES
+
+    @jit.dont_look_inside
     @rgc.no_collect
     def sample_stack_now(self):
         self.cintf.vmprof_sample_stack_now_gc_triggered()
@@ -204,6 +214,15 @@ class VMProf(object):
         """
         if not self.is_enabled:
             raise VMProfError("vmprof is not enabled")
+        
+        # write supportet gc stats to profile
+        for i in range(len(GC_STATS_NAMES)):
+            key = "gc_stats__" + str(i)
+            value = GC_STATS_NAMES[i]
+            self.write_meta(key, value)
+
+        
+        self.write_meta
         
         if self.sample_n_bytes != 0:
             set_alloc_sampling = self.gc_set_allocation_sampling

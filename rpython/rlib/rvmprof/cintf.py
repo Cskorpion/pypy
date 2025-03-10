@@ -164,6 +164,10 @@ def setup():
     vmprof_report_minor_gc_objs = rffi.llexternal("vmprof_report_minor_gc_objs", [rffi.SIGNEDP, rffi.SIGNED],
                                             rffi.INT, compilation_info=eci,
                                             _nowrapper=True)
+    
+    vmprof_write_meta = rffi.llexternal("vmp_write_meta", [rffi.CONST_CCHARP, rffi.CONST_CCHARP],
+                                            rffi.INT, compilation_info=eci,
+                                            _nowrapper=True)
 
 
     return CInterface(locals())

@@ -21,6 +21,7 @@
 
 int vmp_write_all(const char *buf, size_t bufsize);
 int vmp_write_time_now(int marker);
+RPY_EXTERN
 int vmp_write_meta(const char * key, const char * value);
 
 int vmp_profile_fileno(void);

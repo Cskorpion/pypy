@@ -3,8 +3,7 @@ from rpython.rlib.rvmprof import cintf
 
 class DummyVMProf(object):
     is_enabled = False
-    cintf = cintf.CInterface({"vmprof_say_hi": lambda: None,
-                              "vmprof_sample_stack_now_gc_triggered": lambda: None})
+    cintf = cintf.CInterface({"vmprof_sample_stack_now_gc_triggered": lambda: None})
 
     def __init__(self):
         self._unique_id = 0
@@ -34,6 +33,9 @@ class DummyVMProf(object):
 
     def stop_sampling(self):
         return -1
+    
+    def get_supported_gc_stats(self):
+        return []
     
     def vmprof_report_minor_gc_objs(self, array, array_size):
         pass
