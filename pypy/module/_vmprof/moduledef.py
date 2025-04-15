@@ -24,6 +24,8 @@ class Module(MixedModule):
         'start_sampling': 'interp_vmprof.start_sampling',
         'enable_allocation_triggered': 'interp_vmprof.enable_allocation_triggered',
         'sample_stack_now': 'interp_vmprof.sample_stack_now',
+        'get_supported_gc_stats': 'interp_vmprof.get_supported_gc_stats',
+
 
         'VMProfError': 'space.fromcache(interp_vmprof.Cache).w_VMProfError',
     }

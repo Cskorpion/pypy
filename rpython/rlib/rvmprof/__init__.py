@@ -35,8 +35,8 @@ def get_unique_id(code):
 def enable(fileno, interval, memory=0, native=0, real_time=0):
     _get_vmprof().enable(fileno, interval, memory, native, real_time)
 
-def enable_allocation_triggered(fileno, sample_n_bytes=1024, interval=0.0, native=0):
-    _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes, interval, native)
+def enable_allocation_triggered(fileno, sample_n_bytes=1024, interval=0.0, native=0, memory=0, real_time=0):
+    _get_vmprof().enable_allocation_triggered(fileno, sample_n_bytes, interval, native, memory, real_time)
 
 def get_supported_gc_stats():
     return _get_vmprof().get_supported_gc_stats()

@@ -167,7 +167,7 @@ class VMProf(object):
         self.is_enabled = True
     
     @jit.dont_look_inside
-    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, interval=0.0, native=0):
+    def enable_allocation_triggered(self, fileno, sample_n_bytes=1024, interval=0.0, native=0, memory=0, real_time=0):
         """Enable vmprof.  Writes go to the given 'fileno'.
         No sampling intervall, vmprof gets triggered from the gc.
         Raises VMProfError if something goes wrong.
@@ -176,12 +176,12 @@ class VMProf(object):
         if self.is_enabled:
             raise VMProfError("vmprof is already enabled")
 
-        p_error = self.cintf.vmprof_init(fileno, interval, 0, 0, "pypy", native, 0)
+        p_error = self.cintf.vmprof_init(fileno, interval, memory, 0, "pypy", native, real_time)
         if p_error:
             raise VMProfError(rffi.charp2str(p_error))
 
         self._gather_all_code_objs()
-        res = self.cintf.vmprof_enable(0, native, 0)
+        res = self.cintf.vmprof_enable(memory, native, 0)
 
         self.sample_n_bytes = sample_n_bytes
 
@@ -220,13 +220,11 @@ class VMProf(object):
             key = "gc_stats__" + str(i)
             value = GC_STATS_NAMES[i]
             self.write_meta(key, value)
-
-        
-        self.write_meta
         
         if self.sample_n_bytes != 0:
             set_alloc_sampling = self.gc_set_allocation_sampling
             set_alloc_sampling(-1)# triggers minor collection & disables sampling
+            self.sample_n_bytes = 0
         self.is_enabled = False
         res = self.cintf.vmprof_disable()
         if res < 0:
@@ -248,6 +246,7 @@ class VMProf(object):
         if self.sample_n_bytes != 0:
             set_alloc_sampling = self.gc_set_allocation_sampling
             set_alloc_sampling(-1) # triggers minor collection & disables sampling
+            self.sample_n_bytes = 0
 
         fd = self.cintf.vmprof_stop_sampling()
         return rffi.cast(lltype.Signed, fd)

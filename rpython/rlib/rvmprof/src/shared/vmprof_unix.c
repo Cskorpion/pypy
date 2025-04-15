@@ -163,7 +163,7 @@ int vmprof_report_minor_gc_objs(intptr_t * array_ptr, int array_size) {
     //memcpy(st->stack, array_ptr, array_size * sizeof(int));
 
     p->data_offset = offsetof(struct prof_stacktrace_s, marker);
-    p->data_size = (array_size * sizeof(int *) +
+    p->data_size = (array_size * sizeof(void *) +
                     sizeof(struct prof_stacktrace_s) -
                     offsetof(struct prof_stacktrace_s, marker));
 

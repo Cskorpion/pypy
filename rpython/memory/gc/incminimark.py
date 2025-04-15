@@ -587,7 +587,8 @@ class IncrementalMiniMarkGC(MovingGCBase):
     def after_fork(self, result_of_fork):
         if result_of_fork == 0:
             # If we are a child process, we must not sample
-            self._disable_gc_sampling()
+            # disable sampling WITHOUT doing a minor before
+            self._reset_sampling_pointers()
 
     # vmprof cintf access only in this func, to make tests simpler
     def _vmprof_allocation_sample_now(self, gc):
@@ -989,8 +990,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
 
             # Allocation triggered profiling with VMProf
             if self.nursery_top == self.sample_point:# sample_point == llmemory.NULL if sampling disabled, or 'paused' due to pinned objs
-
-                #assert self.pinned_objects_in_nursery == 0, "no pinned objects allowed yet"
 
                 while True:
                     self._vmprof_allocation_sample_now(self)

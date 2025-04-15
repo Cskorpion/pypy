@@ -65,16 +65,14 @@ def enable(space, fileno, period, memory, lines, native, real_time):
     except rvmprof.VMProfError as e:
         raise VMProfError(space, e)
 
-@unwrap_spec(fileno=int, sample_n_bytes=int, interval=float, native=int)
-def enable_allocation_triggered(space, fileno, sample_n_bytes=1024, interval=0.0, native=1):
+@unwrap_spec(fileno=int, sample_n_bytes=int, interval=float, native=int, memory=int)
+def enable_allocation_triggered(space, fileno, sample_n_bytes=1024, interval=0.0, native=1, memory=0):
     """Enable vmprof.  Writes go to the given 'fileno', a file descriptor
     opened for writing.  *The file descriptor must remain open at least
     until disable() is called.*
-
-    No sampling intervall, vmprof gets triggered from the gc every n bytes allocated.
     """
     try:
-        rvmprof.enable_allocation_triggered(fileno, sample_n_bytes, interval, native)
+        rvmprof.enable_allocation_triggered(fileno, sample_n_bytes, interval, native, memory)
     except rvmprof.VMProfError as e:
         raise VMProfError(space, e)
 
@@ -99,6 +97,16 @@ def disable(space):
 
 def is_enabled(space):
     return space.newbool(rvmprof.is_enabled())
+
+def get_supported_gc_stats(space):
+    gc_stats = rvmprof.get_supported_gc_stats()
+    if gc_stats is None:
+        return space.newlist([])
+
+    stats = space.newlist([])
+    for stat in gc_stats:
+        stats.append(space.newtext(stat))
+    return stats
 
 def get_profile_path(space):
     path = rvmprof.get_profile_path(space)
